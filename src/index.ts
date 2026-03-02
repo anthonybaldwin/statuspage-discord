@@ -57,6 +57,8 @@ const envSchema = z.object({
   POST_EXISTING_UPDATES_ON_START: booleanFromEnv.default("false"),
   ENABLE_REPLAY_COMMAND: booleanFromEnv.default("true"),
   ENABLE_CLEAN_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_STATUS_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_TEST_COMMAND: booleanFromEnv.default("true"),
 });
 
 type MonitorConfig = z.infer<typeof monitorSchema>;
@@ -156,26 +158,35 @@ const defaultState: BotState = {
 };
 
 function buildCommands() {
-  const built = [
-    new SlashCommandBuilder()
-      .setName("status")
-      .setDescription("Get the current status for one configured Statuspage.")
-      .addStringOption((option) =>
-        option
-          .setName("target")
-          .setDescription("Optional monitor id when more than one status page is configured.")
-          .setRequired(false),
-      ),
-    new SlashCommandBuilder()
-      .setName("testpost")
-      .setDescription("Post a preview of the current status without marking anything as sent.")
-      .addStringOption((option) =>
-        option
-          .setName("target")
-          .setDescription("Optional monitor id when more than one status page is configured.")
-          .setRequired(false),
-      ),
-  ];
+  const built: ReturnType<SlashCommandBuilder["addStringOption"]>[] = [];
+
+  if (env.ENABLE_STATUS_COMMAND) {
+    built.push(
+      new SlashCommandBuilder()
+        .setName("status")
+        .setDescription("Get the current status for one configured Statuspage.")
+        .addStringOption((option) =>
+          option
+            .setName("target")
+            .setDescription("Optional monitor id when more than one status page is configured.")
+            .setRequired(false),
+        ),
+    );
+  }
+
+  if (env.ENABLE_TEST_COMMAND) {
+    built.push(
+      new SlashCommandBuilder()
+        .setName("testpost")
+        .setDescription("Post a preview of the current status without marking anything as sent.")
+        .addStringOption((option) =>
+          option
+            .setName("target")
+            .setDescription("Optional monitor id when more than one status page is configured.")
+            .setRequired(false),
+        ),
+    );
+  }
 
   if (env.ENABLE_REPLAY_COMMAND) {
     built.push(
@@ -366,6 +377,24 @@ function incidentStateLabel(status: string) {
   }
 }
 
+function statusLabel(indicator: string) {
+  switch (indicator.toLowerCase()) {
+    case "none":
+      return "Operational";
+    case "minor":
+      return "Minor Issues";
+    case "major":
+      return "Major Issues";
+    case "critical":
+      return "Critical";
+    case "maintenance":
+    case "under_maintenance":
+      return "Under Maintenance";
+    default:
+      return titleCase(indicator);
+  }
+}
+
 function titleCase(value: string) {
   return value
     .split(/[_\s]+/)
@@ -493,7 +522,7 @@ function renderStatusEmbed(monitor: MonitorConfig, summary: Summary, prefix?: st
       url: summary.page.url,
     })
     .setTitle(titleCase(summary.status.description))
-    .setDescription(`Overall status: **${titleCase(summary.status.indicator)}**`)
+    .setDescription(`Overall status: **${statusLabel(summary.status.indicator)}**`)
     .addFields(summaryFields(summary))
     .setFooter({
       text: summary.page.url,
@@ -532,23 +561,11 @@ async function getReplayTargets(monitor: MonitorConfig) {
     .filter((candidate) => candidate.updates.length > 0)
     .sort((left, right) => new Date(left.incident.created_at).getTime() - new Date(right.incident.created_at).getTime());
 
-  if (activeIncidents.length > 0) {
-    return activeIncidents;
+  if (activeIncidents.length === 0) {
+    throw new Error("No active incidents to replay.");
   }
 
-  const latestIncident = candidates[0]?.incident;
-  if (!latestIncident) {
-    throw new Error("No incident updates are available to replay.");
-  }
-
-  return [
-    {
-      incident: latestIncident,
-      updates: [...latestIncident.incident_updates].sort(
-        (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
-      ),
-    },
-  ];
+  return activeIncidents;
 }
 
 async function replayIncidentTimeline(
@@ -935,6 +952,10 @@ async function postLatestUpdates(client: Client) {
 }
 
 async function handleStatusCommand(interaction: ChatInputCommandInteraction) {
+  if (!env.ENABLE_STATUS_COMMAND) {
+    throw new Error("/status is disabled.");
+  }
+
   await interaction.deferReply();
   const monitor = resolveMonitor(interaction);
   const state = await readState();
@@ -1013,6 +1034,10 @@ async function handleReplayCommand(interaction: ChatInputCommandInteraction) {
 }
 
 async function handleTestPostCommand(interaction: ChatInputCommandInteraction) {
+  if (!env.ENABLE_TEST_COMMAND) {
+    throw new Error("/testpost is disabled.");
+  }
+
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const monitor = resolveMonitor(interaction);
   const state = await readState();
