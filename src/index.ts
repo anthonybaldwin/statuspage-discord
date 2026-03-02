@@ -94,12 +94,11 @@ async function fetchMonitorIcon(monitor: MonitorConfig): Promise<string | undefi
     const response = await fetch(monitor.baseUrl);
     if (!response.ok) return undefined;
     const html = await response.text();
-    // Look for an img with "logo" in the alt text (standard Statuspage layout).
-    const match = html.match(/<img[^>]+alt=["'][^"']*logo[^"']*["'][^>]+src=["']([^"']+)["']/i)
-      ?? html.match(/<img[^>]+src=["']([^"']+)["'][^>]+alt=["'][^"']*logo[^"']*["']/i);
+    // Look for <link rel="shortcut icon" href="..."> (standard Statuspage favicon).
+    const match = html.match(/<link[^>]+rel=["']shortcut icon["'][^>]+href=["']([^"']+)["']/i);
     if (match?.[1]) {
-      const src = match[1];
-      return src.startsWith("//") ? `https:${src}` : src;
+      const href = match[1];
+      return href.startsWith("//") ? `https:${href}` : href;
     }
   } catch {
     // Silently fall back to no icon.
