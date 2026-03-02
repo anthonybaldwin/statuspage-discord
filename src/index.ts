@@ -1,0 +1,1183 @@
+import {
+  APIEmbedField,
+  ChannelType,
+  ChatInputCommandInteraction,
+  Client,
+  DiscordAPIError,
+  EmbedBuilder,
+  GatewayIntentBits,
+  Message,
+  MessageFlags,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  TextChannel,
+  ThreadAutoArchiveDuration,
+  ThreadChannel,
+} from "discord.js";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { z } from "zod";
+
+const booleanFromEnv = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .transform((value, context) => {
+    if (["true", "1", "yes", "on"].includes(value)) {
+      return true;
+    }
+
+    if (["false", "0", "no", "off"].includes(value)) {
+      return false;
+    }
+
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Expected a boolean-like value, received "${value}"`,
+    });
+    return z.NEVER;
+  });
+
+const monitorSchema = z.object({
+  id: z.string().min(1),
+  channelId: z.string().min(1),
+  baseUrl: z.string().url(),
+  label: z.string().min(1).optional(),
+});
+
+const envSchema = z.object({
+  DISCORD_TOKEN: z.string().min(1),
+  DISCORD_APPLICATION_ID: z.string().min(1),
+  DISCORD_GUILD_ID: z.string().min(1).optional(),
+  DISCORD_CHANNEL_ID: z.string().min(1).optional(),
+  STATUSPAGE_BASE_URL: z.string().url().optional(),
+  STATUSPAGE_MONITORS_JSON: z.string().optional(),
+  POLL_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+  POST_EXISTING_UPDATES_ON_START: booleanFromEnv.default("false"),
+  ENABLE_REPLAY_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_CLEAN_COMMAND: booleanFromEnv.default("true"),
+});
+
+type MonitorConfig = z.infer<typeof monitorSchema>;
+
+function loadMonitors(env: z.infer<typeof envSchema>): MonitorConfig[] {
+  if (env.STATUSPAGE_MONITORS_JSON) {
+    const parsed = JSON.parse(env.STATUSPAGE_MONITORS_JSON) as unknown;
+    return z.array(monitorSchema).parse(parsed);
+  }
+
+  if (env.DISCORD_CHANNEL_ID && env.STATUSPAGE_BASE_URL) {
+    return [
+      {
+        id: "default",
+        channelId: env.DISCORD_CHANNEL_ID,
+        baseUrl: env.STATUSPAGE_BASE_URL,
+      },
+    ];
+  }
+
+  throw new Error(
+    "Configure either STATUSPAGE_MONITORS_JSON or both DISCORD_CHANNEL_ID and STATUSPAGE_BASE_URL.",
+  );
+}
+
+const env = envSchema.parse(process.env);
+const monitors = loadMonitors(env);
+const statePath = resolve("data", "state.json");
+
+type PageStatus = {
+  indicator: string;
+  description: string;
+};
+
+type IncidentUpdate = {
+  id: string;
+  status: string;
+  body: string;
+  created_at: string;
+  updated_at?: string;
+};
+
+type Incident = {
+  id: string;
+  name: string;
+  status: string;
+  impact: string;
+  shortlink?: string;
+  created_at: string;
+  updated_at?: string;
+  resolved_at?: string | null;
+  incident_updates: IncidentUpdate[];
+};
+
+type Summary = {
+  page: {
+    id: string;
+    name: string;
+    url: string;
+    updated_at?: string;
+  };
+  status: PageStatus;
+  incidents: Incident[];
+};
+
+type IncidentsResponse = {
+  page: Summary["page"];
+  incidents: Incident[];
+};
+
+type MonitorState = {
+  postedUpdateIds: string[];
+  lastPostedAt?: string;
+  incidents: Record<
+    string,
+    {
+      parentMessageId: string;
+      threadId: string;
+      postedUpdateIds: string[];
+      updateMessageIds: Record<string, string>;
+      resolvedAt?: string;
+    }
+  >;
+};
+
+type BotState = {
+  monitors: Record<string, MonitorState>;
+};
+
+const defaultMonitorState = (): MonitorState => ({
+  postedUpdateIds: [],
+  incidents: {},
+});
+
+const defaultState: BotState = {
+  monitors: {},
+};
+
+function buildCommands() {
+  const built = [
+    new SlashCommandBuilder()
+      .setName("status")
+      .setDescription("Get the current status for one configured Statuspage.")
+      .addStringOption((option) =>
+        option
+          .setName("target")
+          .setDescription("Optional monitor id when more than one status page is configured.")
+          .setRequired(false),
+      ),
+    new SlashCommandBuilder()
+      .setName("testpost")
+      .setDescription("Post a preview of the current status without marking anything as sent.")
+      .addStringOption((option) =>
+        option
+          .setName("target")
+          .setDescription("Optional monitor id when more than one status page is configured.")
+          .setRequired(false),
+      ),
+  ];
+
+  if (env.ENABLE_REPLAY_COMMAND) {
+    built.push(
+      new SlashCommandBuilder()
+        .setName("replay")
+        .setDescription("Replay active incident timelines into their configured threads for testing.")
+        .addStringOption((option) =>
+          option
+            .setName("target")
+            .setDescription("Optional monitor id when more than one status page is configured.")
+            .setRequired(false),
+        ),
+    );
+  }
+
+  if (env.ENABLE_CLEAN_COMMAND) {
+    built.push(
+      new SlashCommandBuilder()
+        .setName("clean")
+        .setDescription("Delete recent bot-authored messages in the current channel.")
+        .addIntegerOption((option) =>
+          option
+            .setName("limit")
+            .setDescription("How many recent messages to inspect. Defaults to 100.")
+            .setMinValue(1)
+            .setMaxValue(100)
+            .setRequired(false),
+        ),
+    );
+  }
+
+  return built.map((command) => command.toJSON());
+}
+
+const commands = buildCommands();
+
+async function ensureStateFile() {
+  await mkdir(dirname(statePath), { recursive: true });
+
+  try {
+    await readFile(statePath, "utf8");
+  } catch {
+    await writeState(defaultState);
+  }
+}
+
+function getMonitorState(state: BotState, monitorId: string): MonitorState {
+  if (!state.monitors[monitorId]) {
+    state.monitors[monitorId] = defaultMonitorState();
+  }
+
+  for (const incidentState of Object.values(state.monitors[monitorId].incidents)) {
+    incidentState.postedUpdateIds ??= [];
+    incidentState.updateMessageIds ??= {};
+  }
+
+  return state.monitors[monitorId];
+}
+
+async function readState(): Promise<BotState> {
+  await ensureStateFile();
+  const raw = await readFile(statePath, "utf8");
+  const parsed = JSON.parse(raw) as Partial<BotState>;
+  if (parsed.monitors) {
+    const normalized: BotState = {
+      monitors: parsed.monitors,
+    };
+
+    for (const monitorId of Object.keys(normalized.monitors)) {
+      getMonitorState(normalized, monitorId);
+    }
+
+    return normalized;
+  }
+
+  // Migrate legacy single-monitor state into the default monitor bucket.
+  const legacyMonitor = defaultMonitorState();
+  legacyMonitor.postedUpdateIds = (parsed as Partial<MonitorState>).postedUpdateIds ?? [];
+  legacyMonitor.lastPostedAt = (parsed as Partial<MonitorState>).lastPostedAt;
+  legacyMonitor.incidents = (parsed as Partial<MonitorState>).incidents ?? {};
+
+  return {
+    monitors: {
+      default: legacyMonitor,
+    },
+  };
+}
+
+async function writeState(state: BotState) {
+  await mkdir(dirname(statePath), { recursive: true });
+  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+async function fetchJson<T>(monitor: MonitorConfig, path: string): Promise<T> {
+  const response = await fetch(`${monitor.baseUrl}/api/v2${path}`, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Statuspage request failed (${response.status}): ${body}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function fetchSummary(monitor: MonitorConfig): Promise<Summary> {
+  return fetchJson<Summary>(monitor, "/summary.json");
+}
+
+async function fetchIncidents(monitor: MonitorConfig): Promise<Incident[]> {
+  const response = await fetchJson<IncidentsResponse>(monitor, "/incidents.json");
+  return response.incidents;
+}
+
+function formatTimestamp(value?: string | null) {
+  if (!value) {
+    return "unknown";
+  }
+
+  return `<t:${Math.floor(new Date(value).getTime() / 1000)}:f>`;
+}
+
+function statusColor(status: string) {
+  switch (status.toLowerCase()) {
+    case "resolved":
+    case "operational":
+    case "none":
+      return 0x2fb344;
+    case "identified":
+      return 0xf2c94c;
+    case "monitoring":
+      return 0x6aa9ff;
+    case "investigating":
+    case "update":
+    case "minor":
+    case "degraded_performance":
+      return 0xf2994a;
+    case "partial_outage":
+    case "major":
+    case "critical":
+    case "major_outage":
+      return 0xeb5757;
+    case "under_maintenance":
+      return 0x8e8e93;
+    case "maintenance":
+      return 0x7f8c8d;
+    default:
+      return 0x5865f2;
+  }
+}
+
+function impactColor(impact: string, status?: string) {
+  if (status?.toLowerCase() === "resolved") {
+    return 0x2fb344;
+  }
+
+  switch (impact.toLowerCase()) {
+    case "none":
+      return 0x6aa9ff;
+    case "minor":
+      return 0xf2c94c;
+    case "major":
+      return 0xf2994a;
+    case "critical":
+      return 0xeb5757;
+    default:
+      return 0x5865f2;
+  }
+}
+
+function incidentStateLabel(status: string) {
+  switch (status.toLowerCase()) {
+    case "investigating":
+      return "Investigating";
+    case "identified":
+      return "Identified";
+    case "monitoring":
+      return "Monitoring";
+    case "resolved":
+      return "Resolved";
+    case "update":
+      return "Update";
+    default:
+      return titleCase(status);
+  }
+}
+
+function titleCase(value: string) {
+  return value
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function truncate(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 1)}...`;
+}
+
+function monitorDisplayName(monitor: MonitorConfig, pageName?: string) {
+  return monitor.label ?? pageName ?? monitor.id;
+}
+
+function renderUpdateEmbed(
+  monitor: MonitorConfig,
+  incident: Incident,
+  update: IncidentUpdate,
+  prefix?: string,
+) {
+  const embed = new EmbedBuilder()
+    .setColor(impactColor(incident.impact, incident.status))
+    .setAuthor({
+      name: `${monitorDisplayName(monitor)} Incident Update`,
+    })
+    .setTitle(incident.name)
+    .setDescription(truncate(update.body, 4000))
+    .addFields(
+      { name: "Status", value: incidentStateLabel(update.status), inline: true },
+      { name: "Impact", value: titleCase(incident.impact), inline: true },
+      { name: "Updated", value: formatTimestamp(update.created_at), inline: true },
+    )
+    .setFooter({
+      text: update.id,
+    })
+    .setTimestamp(new Date(update.created_at));
+
+  if (incident.shortlink) {
+    embed.setURL(incident.shortlink);
+  }
+
+  return embed;
+}
+
+function renderParentEmbed(monitor: MonitorConfig, incident: Incident) {
+  const latest = [...incident.incident_updates].sort(byNewestUpdate)[0];
+  const description = incident.resolved_at
+    ? "This incident has been resolved. Open the thread for the full timeline."
+    : "Open the thread for the full timeline and follow-up updates.";
+  const embed = new EmbedBuilder()
+    .setColor(impactColor(incident.impact, incident.status))
+    .setAuthor({
+      name: `${monitorDisplayName(monitor)} Incident`,
+    })
+    .setTitle(incident.name)
+    .setDescription(description)
+    .addFields(
+      { name: "Status", value: titleCase(incident.status), inline: true },
+      { name: "Impact", value: titleCase(incident.impact), inline: true },
+      { name: "Created", value: formatTimestamp(incident.created_at), inline: true },
+      {
+        name: "Latest Update",
+        value: latest ? formatTimestamp(latest.created_at) : "unknown",
+        inline: true,
+      },
+    )
+    .setFooter({
+      text: incident.resolved_at ? "Resolved" : "Active",
+    })
+    .setTimestamp(new Date(latest?.created_at ?? incident.created_at));
+
+  if (incident.shortlink) {
+    embed.setURL(incident.shortlink);
+  }
+
+  return embed;
+}
+
+function summaryFields(summary: Summary): APIEmbedField[] {
+  if (summary.incidents.length === 0) {
+    return [
+      {
+        name: "Active Incidents",
+        value: "No active incidents.",
+      },
+    ];
+  }
+
+  return summary.incidents.slice(0, 10).map((incident) => {
+    const latest = [...incident.incident_updates].sort(byNewestUpdate)[0];
+    const parts = [
+      `Status: ${titleCase(incident.status)}`,
+      `Impact: ${titleCase(incident.impact)}`,
+      `Created: ${formatTimestamp(incident.created_at)}`,
+    ];
+
+    if (latest) {
+      parts.push(`Latest: ${formatTimestamp(latest.created_at)}`);
+    }
+
+    if (incident.shortlink) {
+      parts.push(`[Open incident](${incident.shortlink})`);
+    }
+
+    return {
+      name: incident.name,
+      value: truncate(parts.join("\n"), 1024),
+    };
+  });
+}
+
+function renderStatusEmbed(monitor: MonitorConfig, summary: Summary, prefix?: string) {
+  return new EmbedBuilder()
+    .setColor(statusColor(summary.status.indicator))
+    .setAuthor({
+      name: prefix
+        ? `${prefix} • ${monitorDisplayName(monitor, summary.page.name)}`
+        : monitorDisplayName(monitor, summary.page.name),
+      url: summary.page.url,
+    })
+    .setTitle(titleCase(summary.status.description))
+    .setDescription(`Overall status: **${titleCase(summary.status.indicator)}**`)
+    .addFields(summaryFields(summary))
+    .setFooter({
+      text: summary.page.url,
+    })
+    .setTimestamp(summary.page.updated_at ? new Date(summary.page.updated_at) : new Date());
+}
+
+function byNewestUpdate(a: IncidentUpdate, b: IncidentUpdate) {
+  return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+}
+
+async function getReplayTargets(monitor: MonitorConfig) {
+  const [summary, incidents] = await Promise.all([fetchSummary(monitor), fetchIncidents(monitor)]);
+  const incidentById = new Map(incidents.map((incident) => [incident.id, incident]));
+  const candidates = incidents
+    .flatMap((incident) =>
+      incident.incident_updates.map((update) => ({
+        incident,
+        update,
+      })),
+    )
+    .sort((left, right) => byNewestUpdate(left.update, right.update));
+
+  if (candidates.length === 0) {
+    throw new Error("No incident updates are available to replay.");
+  }
+
+  const activeIncidents = summary.incidents
+    .map((summaryIncident) => incidentById.get(summaryIncident.id) ?? summaryIncident)
+    .map((incident) => ({
+      incident,
+      updates: [...incident.incident_updates].sort(
+        (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+      ),
+    }))
+    .filter((candidate) => candidate.updates.length > 0)
+    .sort((left, right) => new Date(left.incident.created_at).getTime() - new Date(right.incident.created_at).getTime());
+
+  if (activeIncidents.length > 0) {
+    return activeIncidents;
+  }
+
+  const latestIncident = candidates[0]?.incident;
+  if (!latestIncident) {
+    throw new Error("No incident updates are available to replay.");
+  }
+
+  return [
+    {
+      incident: latestIncident,
+      updates: [...latestIncident.incident_updates].sort(
+        (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+      ),
+    },
+  ];
+}
+
+async function replayIncidentTimeline(
+  channel: TextChannel,
+  monitorState: MonitorState,
+  monitor: MonitorConfig,
+  incident: Incident,
+  updates: IncidentUpdate[],
+) {
+  const { parentMessage, thread } = await ensureIncidentThread(channel, monitorState, monitor, incident);
+  await syncIncidentParentMessage(channel, monitorState, monitor, incident, parentMessage);
+  const incidentState = monitorState.incidents[incident.id];
+  if (!incidentState) {
+    throw new Error(`Incident state for ${incident.id} was not initialized.`);
+  }
+  incidentState.resolvedAt = incident.resolved_at ?? undefined;
+
+  if (thread.archived) {
+    await thread.setArchived(false, "Replay requested");
+  }
+
+  for (const update of updates) {
+    const message = await thread.send({
+      embeds: [renderUpdateEmbed(monitor, incident, update, "Replay")],
+    });
+    if (!incidentState.postedUpdateIds.includes(update.id)) {
+      incidentState.postedUpdateIds.push(update.id);
+    }
+    incidentState.updateMessageIds[update.id] = message.id;
+  }
+
+  incidentState.postedUpdateIds = incidentState.postedUpdateIds.slice(-500);
+  if (incident.resolved_at && !thread.archived) {
+    await thread.setArchived(true, "Incident resolved");
+  }
+  return thread;
+}
+
+async function hasLiveIncidentMessages(channel: TextChannel, monitorState: MonitorState, incident: Incident) {
+  const mapping = monitorState.incidents[incident.id];
+  if (!mapping) {
+    return false;
+  }
+
+  try {
+    const [parentMessage, fetchedThread] = await Promise.all([
+      channel.messages.fetch(mapping.parentMessageId),
+      channel.client.channels.fetch(mapping.threadId),
+    ]);
+
+    if (!parentMessage || !fetchedThread?.isThread()) {
+      delete monitorState.incidents[incident.id];
+      return false;
+    }
+
+    const threadMessages = await fetchedThread.messages.fetch({ limit: 10 });
+    return threadMessages.size > 0;
+  } catch (error) {
+    if (
+      error instanceof DiscordAPIError &&
+      (error.code === 10003 || error.code === 10008 || error.code === 50001)
+    ) {
+      delete monitorState.incidents[incident.id];
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function getMissingIncidentUpdates(
+  thread: ThreadChannel,
+  incidentState: MonitorState["incidents"][string],
+  updates: IncidentUpdate[],
+) {
+  const missing: IncidentUpdate[] = [];
+
+  for (const update of updates) {
+    const messageId = incidentState.updateMessageIds[update.id];
+    if (!messageId) {
+      missing.push(update);
+      continue;
+    }
+
+    try {
+      await thread.messages.fetch(messageId);
+    } catch (error) {
+      if (
+        error instanceof DiscordAPIError &&
+        (error.code === 10008 || error.code === 10003 || error.code === 50001)
+      ) {
+        delete incidentState.updateMessageIds[update.id];
+        incidentState.postedUpdateIds = incidentState.postedUpdateIds.filter((postedId) => postedId !== update.id);
+        missing.push(update);
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return missing;
+}
+
+function extractUpdateIdFromMessage(message: Message) {
+  const footerText = message.embeds[0]?.footer?.text;
+  if (!footerText) {
+    return undefined;
+  }
+
+  return footerText.trim() || undefined;
+}
+
+async function getPresentThreadUpdateIds(thread: ThreadChannel, botUserId: string) {
+  const present = new Set<string>();
+  let before: string | undefined;
+
+  while (true) {
+    const batch = await thread.messages.fetch({ limit: 100, before });
+    if (batch.size === 0) {
+      break;
+    }
+
+    for (const message of batch.values()) {
+      if (message.author.id !== botUserId) {
+        continue;
+      }
+
+      const updateId = extractUpdateIdFromMessage(message);
+      if (updateId) {
+        present.add(updateId);
+      }
+    }
+
+    if (batch.size < 100) {
+      break;
+    }
+
+    before = batch.last()?.id;
+  }
+
+  return present;
+}
+
+async function getReplaySummaryText(
+  replayTargets: Array<{ incident: Incident; updates: IncidentUpdate[] }>,
+) {
+  const replayedCount = replayTargets.reduce((total, target) => total + target.updates.length, 0);
+  const incidentNames = replayTargets.map((target) => `\`${target.incident.name}\``);
+
+  if (replayTargets.length === 1) {
+    return `Replayed ${replayedCount} update${replayedCount === 1 ? "" : "s"} for ${incidentNames[0]}.`;
+  }
+
+  return `Replayed ${replayedCount} updates across ${replayTargets.length} incidents: ${incidentNames.join(", ")}.`;
+}
+
+function getReplaySkippedText(skippedIncidents: Incident[]) {
+  if (skippedIncidents.length === 0) {
+    return "";
+  }
+
+  const incidentNames = skippedIncidents.map((incident) => `\`${incident.name}\``).join(", ");
+  return `Skipped incidents that already have live thread messages: ${incidentNames}.`;
+}
+
+async function registerCommands() {
+  const rest = new REST({ version: "10" }).setToken(env.DISCORD_TOKEN);
+  const route = env.DISCORD_GUILD_ID
+    ? Routes.applicationGuildCommands(env.DISCORD_APPLICATION_ID, env.DISCORD_GUILD_ID)
+    : Routes.applicationCommands(env.DISCORD_APPLICATION_ID);
+
+  await rest.put(route, { body: commands });
+}
+
+async function getTargetChannel(client: Client, monitor: MonitorConfig) {
+  const channel = await client.channels.fetch(monitor.channelId);
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    throw new Error(`Configured channel ${monitor.channelId} for monitor "${monitor.id}" must point to a text channel.`);
+  }
+
+  return channel as TextChannel;
+}
+
+function resolveMonitor(interaction: ChatInputCommandInteraction) {
+  const requested = interaction.options.getString("target") ?? undefined;
+
+  if (requested) {
+    const match = monitors.find((monitor) => monitor.id === requested);
+    if (!match) {
+      throw new Error(`Unknown target "${requested}". Configured targets: ${monitors.map((monitor) => monitor.id).join(", ")}`);
+    }
+    return match;
+  }
+
+  if (monitors.length === 1) {
+    return monitors[0];
+  }
+
+  const channelMatch = monitors.find((monitor) => monitor.channelId === interaction.channelId);
+  if (channelMatch) {
+    return channelMatch;
+  }
+
+  throw new Error(`Multiple monitors are configured. Pass a target: ${monitors.map((monitor) => monitor.id).join(", ")}`);
+}
+
+async function assertMonitorChannelAccess(
+  interaction: ChatInputCommandInteraction,
+  monitor: MonitorConfig,
+  state: BotState,
+) {
+  if (interaction.channelId === monitor.channelId) {
+    return;
+  }
+
+  const monitorState = getMonitorState(state, monitor.id);
+  const allowedThreadIds = new Set(
+    Object.values(monitorState.incidents).map((incidentMapping) => incidentMapping.threadId),
+  );
+
+  if (interaction.channelId && allowedThreadIds.has(interaction.channelId)) {
+    return;
+  }
+
+  throw new Error(`This command can only be used in <#${monitor.channelId}> or its incident threads.`);
+}
+
+async function ensureIncidentThread(
+  channel: TextChannel,
+  monitorState: MonitorState,
+  monitor: MonitorConfig,
+  incident: Incident,
+): Promise<{ parentMessage: Message; thread: ThreadChannel }> {
+  const existing = monitorState.incidents[incident.id];
+
+  if (existing) {
+    try {
+      const [parentMessage, fetchedThread] = await Promise.all([
+        channel.messages.fetch(existing.parentMessageId),
+        channel.client.channels.fetch(existing.threadId),
+      ]);
+
+      if (!fetchedThread?.isThread()) {
+        throw new Error(`Stored thread ${existing.threadId} for incident ${incident.id} is missing.`);
+      }
+
+      return {
+        parentMessage,
+        thread: fetchedThread,
+      };
+    } catch (error) {
+      // Self-heal after manual cleanup or deleted threads/messages.
+      if (
+        error instanceof DiscordAPIError &&
+        (error.code === 10003 || error.code === 10008 || error.code === 50001)
+      ) {
+        delete monitorState.incidents[incident.id];
+      } else if (error instanceof Error) {
+        delete monitorState.incidents[incident.id];
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  const parentMessage = await channel.send({
+    embeds: [renderParentEmbed(monitor, incident)],
+  });
+
+  const thread = await parentMessage.startThread({
+    name: truncate(incident.name, 100),
+    autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+    reason: `Statuspage incident ${incident.id}`,
+  });
+
+  monitorState.incidents[incident.id] = {
+    parentMessageId: parentMessage.id,
+    threadId: thread.id,
+    postedUpdateIds: [],
+    updateMessageIds: {},
+    resolvedAt: incident.resolved_at ?? undefined,
+  };
+
+  return { parentMessage, thread };
+}
+
+async function syncIncidentParentMessage(
+  channel: TextChannel,
+  monitorState: MonitorState,
+  monitor: MonitorConfig,
+  incident: Incident,
+  parentMessage?: Message,
+) {
+  const mapping = monitorState.incidents[incident.id];
+  if (!mapping) {
+    return;
+  }
+
+  try {
+    const message = parentMessage ?? (await channel.messages.fetch(mapping.parentMessageId));
+    await message.edit({
+      embeds: [renderParentEmbed(monitor, incident)],
+    });
+  } catch (error) {
+    if (
+      error instanceof DiscordAPIError &&
+      (error.code === 10008 || error.code === 10003 || error.code === 50001)
+    ) {
+      delete monitorState.incidents[incident.id];
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfig, state: BotState) {
+  const [incidents, channel] = await Promise.all([
+    fetchIncidents(monitor),
+    getTargetChannel(client, monitor),
+  ]);
+  const monitorState = getMonitorState(state, monitor.id);
+
+  const allUpdates = incidents
+    .flatMap((incident) =>
+      incident.incident_updates.map((update) => ({
+        incident,
+        update,
+      })),
+    )
+    .sort((left, right) => new Date(left.update.created_at).getTime() - new Date(right.update.created_at).getTime());
+
+  if (monitorState.postedUpdateIds.length === 0 && !env.POST_EXISTING_UPDATES_ON_START) {
+    monitorState.postedUpdateIds = allUpdates.map(({ update }) => update.id).slice(-500);
+    monitorState.lastPostedAt = new Date().toISOString();
+    console.log(`Seeded ${monitorState.postedUpdateIds.length} existing incident updates without posting for "${monitor.id}".`);
+    return;
+  }
+
+  const unseen = allUpdates.filter(({ update }) => !monitorState.postedUpdateIds.includes(update.id));
+
+  if (unseen.length === 0) {
+    return;
+  }
+
+  for (const { incident, update } of unseen) {
+    const { parentMessage, thread } = await ensureIncidentThread(channel, monitorState, monitor, incident);
+    const incidentState = monitorState.incidents[incident.id];
+    incidentState.resolvedAt = incident.resolved_at ?? undefined;
+
+    if (thread.archived) {
+      await thread.setArchived(false, "New incident update received");
+    }
+
+    if (!incidentState.postedUpdateIds.includes(update.id)) {
+      const message = await thread.send({
+        embeds: [renderUpdateEmbed(monitor, incident, update)],
+      });
+      incidentState.postedUpdateIds.push(update.id);
+      incidentState.updateMessageIds[update.id] = message.id;
+      incidentState.postedUpdateIds = incidentState.postedUpdateIds.slice(-500);
+    }
+
+    await syncIncidentParentMessage(channel, monitorState, monitor, incident, parentMessage);
+
+    if (incident.resolved_at && !thread.archived) {
+      await thread.setArchived(true, "Incident resolved");
+    }
+
+    monitorState.postedUpdateIds.push(update.id);
+    monitorState.lastPostedAt = new Date().toISOString();
+  }
+
+  monitorState.postedUpdateIds = monitorState.postedUpdateIds.slice(-500);
+}
+
+async function postLatestUpdates(client: Client) {
+  const state = await readState();
+  for (const monitor of monitors) {
+    await postLatestUpdatesForMonitor(client, monitor, state);
+  }
+  await writeState(state);
+}
+
+async function handleStatusCommand(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply();
+  const monitor = resolveMonitor(interaction);
+  const state = await readState();
+  await assertMonitorChannelAccess(interaction, monitor, state);
+  const summary = await fetchSummary(monitor);
+  await interaction.editReply({
+    embeds: [renderStatusEmbed(monitor, summary)],
+  });
+}
+
+async function handleReplayCommand(interaction: ChatInputCommandInteraction) {
+  if (!env.ENABLE_REPLAY_COMMAND) {
+    throw new Error("/replay is disabled.");
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const monitor = resolveMonitor(interaction);
+  const state = await readState();
+  await assertMonitorChannelAccess(interaction, monitor, state);
+  const [replayTargets, channel] = await Promise.all([
+    getReplayTargets(monitor),
+    getTargetChannel(interaction.client, monitor),
+  ]);
+
+  const monitorState = getMonitorState(state, monitor.id);
+  const replayedTargets: Array<{ incident: Incident; updates: IncidentUpdate[] }> = [];
+  const skippedIncidents: Incident[] = [];
+  const botUserId = interaction.client.user?.id;
+
+  if (!botUserId) {
+    throw new Error("Bot user is not available.");
+  }
+
+  for (const { incident, updates } of replayTargets) {
+    const existing = monitorState.incidents[incident.id];
+    const thread = existing ? await channel.client.channels.fetch(existing.threadId).catch(() => null) : null;
+    let missingUpdates = updates;
+
+    if (existing && thread?.isThread()) {
+      const missingFromTrackedState = await getMissingIncidentUpdates(thread, existing, updates);
+      const presentThreadUpdateIds = await getPresentThreadUpdateIds(thread, botUserId);
+      const missingFromThreadScan = updates.filter((update) => !presentThreadUpdateIds.has(update.id));
+      const missingIds = new Set([
+        ...missingFromTrackedState.map((update) => update.id),
+        ...missingFromThreadScan.map((update) => update.id),
+      ]);
+      missingUpdates = updates.filter((update) => missingIds.has(update.id));
+    }
+
+    if (
+      missingUpdates.length === 0 &&
+      (await hasLiveIncidentMessages(channel, monitorState, incident))
+    ) {
+      skippedIncidents.push(incident);
+      continue;
+    }
+
+    await replayIncidentTimeline(channel, monitorState, monitor, incident, missingUpdates);
+    replayedTargets.push({ incident, updates: missingUpdates });
+  }
+
+  await writeState(state);
+
+  if (replayedTargets.length === 0) {
+    await interaction.editReply({
+      content: getReplaySkippedText(skippedIncidents) || "Nothing to replay.",
+    });
+    return;
+  }
+
+  const replayText = await getReplaySummaryText(replayedTargets);
+  const skippedText = getReplaySkippedText(skippedIncidents);
+  await interaction.editReply({
+    content: skippedText ? `${replayText}\n${skippedText}` : replayText,
+  });
+}
+
+async function handleTestPostCommand(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const monitor = resolveMonitor(interaction);
+  const state = await readState();
+  await assertMonitorChannelAccess(interaction, monitor, state);
+  const [summary, channel] = await Promise.all([
+    fetchSummary(monitor),
+    getTargetChannel(interaction.client, monitor),
+  ]);
+
+  await channel.send({
+    embeds: [renderStatusEmbed(monitor, summary, "Test")],
+  });
+  await interaction.editReply({
+    content: `Posted a status preview into <#${monitor.channelId}>.`,
+  });
+}
+
+async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
+  if (!env.ENABLE_CLEAN_COMMAND) {
+    throw new Error("/clean is disabled.");
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const state = await readState();
+
+  const channel = interaction.channel;
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    throw new Error("/clean can only be used in a guild text channel.");
+  }
+
+  const channelMonitor = monitors.find((monitor) => monitor.channelId === channel.id);
+  if (!channelMonitor) {
+    throw new Error("/clean can only be used in a configured monitor channel.");
+  }
+
+  await assertMonitorChannelAccess(interaction, channelMonitor, state);
+
+  const limit = interaction.options.getInteger("limit") ?? 100;
+  const messages = await channel.messages.fetch({ limit });
+  const botUserId = interaction.client.user?.id;
+
+  if (!botUserId) {
+    throw new Error("Bot user is not available.");
+  }
+
+  const monitorState = getMonitorState(state, channelMonitor.id);
+  const deletableMessages = messages.filter((message) => {
+    if (message.author.id !== botUserId) {
+      return false;
+    }
+
+    // Discord bulk delete rejects messages older than 14 days.
+    return Date.now() - message.createdTimestamp < 14 * 24 * 60 * 60 * 1000;
+  });
+
+  let deletedThreadMessageCount = 0;
+  for (const [incidentId, mapping] of Object.entries(monitorState.incidents)) {
+    const fetchedThread = await interaction.client.channels.fetch(mapping.threadId).catch(() => null);
+    if (!fetchedThread?.isThread()) {
+      delete monitorState.incidents[incidentId];
+      continue;
+    }
+
+    const threadMessages = await fetchedThread.messages.fetch({ limit: 100 });
+    const threadBotMessages = threadMessages.filter((message) => message.author.id === botUserId);
+
+    if (threadBotMessages.size > 0) {
+      const deleted = await fetchedThread.bulkDelete(threadBotMessages, true).catch(() => null);
+      deletedThreadMessageCount += deleted?.size ?? 0;
+    }
+
+    await fetchedThread.delete("Clean command requested").catch(() => null);
+    monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
+      (updateId) => !mapping.postedUpdateIds.includes(updateId),
+    );
+    delete monitorState.incidents[incidentId];
+  }
+
+  if (deletableMessages.size === 0) {
+    await writeState(state);
+    await interaction.editReply({
+      content:
+        deletedThreadMessageCount > 0
+          ? `Deleted ${deletedThreadMessageCount} bot-authored thread message${deletedThreadMessageCount === 1 ? "" : "s"} and removed incident threads for <#${channel.id}>.`
+          : `No recent bot-authored messages found in <#${channel.id}>.`,
+    });
+    return;
+  }
+
+  const deleted = await channel.bulkDelete(deletableMessages, true);
+  for (const [incidentId, mapping] of Object.entries(monitorState.incidents)) {
+    if (deleted.has(mapping.parentMessageId)) {
+      delete monitorState.incidents[incidentId];
+      monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
+        (updateId) => !mapping.postedUpdateIds.includes(updateId),
+      );
+    }
+  }
+  await writeState(state);
+
+  await interaction.editReply({
+    content: `Deleted ${deleted.size} bot-authored channel message${deleted.size === 1 ? "" : "s"} and ${deletedThreadMessageCount} bot-authored thread message${deletedThreadMessageCount === 1 ? "" : "s"} in <#${channel.id}>.`,
+  });
+}
+
+async function main() {
+  await ensureStateFile();
+  await registerCommands();
+
+  const client = new Client({
+    intents: [GatewayIntentBits.Guilds],
+  });
+
+  client.once("clientReady", async () => {
+    console.log(`Logged in as ${client.user?.tag}`);
+
+    try {
+      await postLatestUpdates(client);
+    } catch (error) {
+      console.error("Initial poll failed.", error);
+    }
+
+    setInterval(() => {
+      void postLatestUpdates(client).catch((error) => {
+        console.error("Polling failed.", error);
+      });
+    }, env.POLL_INTERVAL_MS);
+  });
+
+  client.on("interactionCreate", async (interaction) => {
+    if (!interaction.isChatInputCommand()) {
+      return;
+    }
+
+    try {
+      if (interaction.commandName === "status") {
+        await handleStatusCommand(interaction);
+        return;
+      }
+
+      if (interaction.commandName === "replay") {
+        await handleReplayCommand(interaction);
+        return;
+      }
+
+      if (interaction.commandName === "testpost") {
+        await handleTestPostCommand(interaction);
+        return;
+      }
+
+      if (interaction.commandName === "clean") {
+        await handleCleanCommand(interaction);
+        return;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unexpected error";
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
+      }
+    }
+  });
+
+  await client.login(env.DISCORD_TOKEN);
+}
+
+await main();
