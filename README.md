@@ -38,16 +38,26 @@ STATUSPAGE_MONITORS_JSON=[{"id":"atlassian","channelId":"123456789012345678","ba
 
 ```bash
 bun install
-bun run dev
+bun dev
 ```
 
 Or run without watch mode:
 
 ```bash
-bun run start
+bun start
 ```
 
-## Docker
+## Docker Compose
+
+The simplest way to run in production. Secrets stay in your host-side `.env` and are injected at runtime via `env_file` — they are never copied into the image.
+
+```bash
+docker compose up -d
+```
+
+State persists in `./data` across restarts.
+
+## Docker (manual)
 
 Build the image:
 
@@ -55,16 +65,16 @@ Build the image:
 docker build -t statuspage-discord .
 ```
 
-Run it with your local `.env` mounted at runtime, not copied into the image:
-
-```bash
-docker run --rm --env-file .env statuspage-discord
-```
-
-If you want state to persist across container restarts, mount a host directory for `data`:
+Run it with your local `.env` passed at runtime:
 
 ```bash
 docker run --rm --env-file .env -v ./data:/app/data statuspage-discord
+```
+
+A prebuilt image is also available from the GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/anthonybaldwin/statuspage-discord:main
 ```
 
 ## Notes
