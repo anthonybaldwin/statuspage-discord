@@ -87,6 +87,36 @@ function loadMonitors(env: z.infer<typeof envSchema>): MonitorConfig[] {
 const env = envSchema.parse(process.env);
 const monitors = loadMonitors(env);
 const statePath = resolve("data", "state.json");
+const monitorIcons = new Map<string, string>();
+
+async function fetchMonitorIcon(monitor: MonitorConfig): Promise<string | undefined> {
+  try {
+    const response = await fetch(monitor.baseUrl);
+    if (!response.ok) return undefined;
+    const html = await response.text();
+    // Look for <link rel="shortcut icon" href="..."> (standard Statuspage favicon).
+    const match = html.match(/<link[^>]+rel=["']shortcut icon["'][^>]+href=["']([^"']+)["']/i);
+    if (match?.[1]) {
+      const href = match[1];
+      return href.startsWith("//") ? `https:${href}` : href;
+    }
+  } catch {
+    // Silently fall back to no icon.
+  }
+  return undefined;
+}
+
+async function cacheMonitorIcons() {
+  await Promise.all(
+    monitors.map(async (monitor) => {
+      const icon = await fetchMonitorIcon(monitor);
+      if (icon) {
+        monitorIcons.set(monitor.id, icon);
+        console.log(`Cached icon for "${monitor.id}": ${icon}`);
+      }
+    }),
+  );
+}
 
 type PageStatus = {
   indicator: string;
@@ -425,6 +455,7 @@ function renderUpdateEmbed(
     .setColor(impactColor(incident.impact, incident.status))
     .setAuthor({
       name: `${monitorDisplayName(monitor)} Incident Update`,
+      iconURL: monitorIcons.get(monitor.id),
     })
     .setTitle(incident.name)
     .setDescription(truncate(update.body, 4000))
@@ -454,6 +485,7 @@ function renderParentEmbed(monitor: MonitorConfig, incident: Incident) {
     .setColor(impactColor(incident.impact, incident.status))
     .setAuthor({
       name: `${monitorDisplayName(monitor)} Incident`,
+      iconURL: monitorIcons.get(monitor.id),
     })
     .setTitle(incident.name)
     .setDescription(description)
@@ -520,6 +552,7 @@ function renderStatusEmbed(monitor: MonitorConfig, summary: Summary, prefix?: st
         ? `${prefix} • ${monitorDisplayName(monitor, summary.page.name)}`
         : monitorDisplayName(monitor, summary.page.name),
       url: summary.page.url,
+      iconURL: monitorIcons.get(monitor.id),
     })
     .setTitle(titleCase(summary.status.description))
     .setDescription(`Overall status: **${statusLabel(summary.status.indicator)}**`)
@@ -1145,6 +1178,7 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
 
 async function main() {
   await ensureStateFile();
+  await cacheMonitorIcons();
   await registerCommands();
 
   const client = new Client({
