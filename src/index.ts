@@ -869,6 +869,10 @@ async function ensureIncidentThread(
     embeds: [renderParentEmbed(monitor, incident)],
   });
 
+  if (!incident.resolved_at) {
+    await parentMessage.pin().catch(() => null);
+  }
+
   const thread = await parentMessage.startThread({
     name: truncate(incident.name, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
@@ -967,6 +971,7 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
     await syncIncidentParentMessage(channel, monitorState, monitor, incident, parentMessage);
 
     if (incident.resolved_at && !thread.archived) {
+      await parentMessage.unpin().catch(() => null);
       await thread.setArchived(true, "Incident resolved");
     }
 
