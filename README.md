@@ -88,7 +88,7 @@ docker pull ghcr.io/anthonybaldwin/statuspage-discord:main
 - The bot uses the public Statuspage API under `<base-url>/api/v2/...`, so a public page URL is enough.
 - For development, setting `DISCORD_GUILD_ID` makes slash-command registration update faster than global commands.
 - On first startup, the bot seeds current incident-update IDs without posting them unless `POST_EXISTING_UPDATES_ON_START=true`.
-- New incidents create one parent message in the configured channel and a thread for follow-up updates.
+- New incidents create one parent message in the configured channel and a thread for follow-up updates. The parent message is pinned while the incident is active and unpinned when resolved.
 - When multiple monitors are configured, command `target` values map to the monitor `id` fields.
-- The bot needs permission to create and send messages in threads if you want incident threads to work.
+- The bot needs permission to create and send messages in threads if you want incident threads to work. It also needs the Manage Messages permission to pin/unpin incident messages.
 - For Docker, keep secrets in a host-side `.env` and pass them with `--env-file` instead of copying them into the image.
