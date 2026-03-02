@@ -532,23 +532,11 @@ async function getReplayTargets(monitor: MonitorConfig) {
     .filter((candidate) => candidate.updates.length > 0)
     .sort((left, right) => new Date(left.incident.created_at).getTime() - new Date(right.incident.created_at).getTime());
 
-  if (activeIncidents.length > 0) {
-    return activeIncidents;
+  if (activeIncidents.length === 0) {
+    throw new Error("No active incidents to replay.");
   }
 
-  const latestIncident = candidates[0]?.incident;
-  if (!latestIncident) {
-    throw new Error("No incident updates are available to replay.");
-  }
-
-  return [
-    {
-      incident: latestIncident,
-      updates: [...latestIncident.incident_updates].sort(
-        (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
-      ),
-    },
-  ];
+  return activeIncidents;
 }
 
 async function replayIncidentTimeline(
