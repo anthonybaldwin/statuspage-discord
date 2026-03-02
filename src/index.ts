@@ -907,6 +907,12 @@ async function syncIncidentParentMessage(
     await message.edit({
       embeds: [renderParentEmbed(monitor, incident)],
     });
+
+    if (!incident.resolved_at && !message.pinned) {
+      await message.pin().catch(() => null);
+    } else if (incident.resolved_at && message.pinned) {
+      await message.unpin().catch(() => null);
+    }
   } catch (error) {
     if (
       error instanceof DiscordAPIError &&
