@@ -933,9 +933,10 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
     .sort((left, right) => new Date(left.update.created_at).getTime() - new Date(right.update.created_at).getTime());
 
   if (monitorState.postedUpdateIds.length === 0 && !env.POST_EXISTING_UPDATES_ON_START) {
-    monitorState.postedUpdateIds = allUpdates.map(({ update }) => update.id).slice(-500);
+    const resolvedUpdates = allUpdates.filter(({ incident }) => incident.resolved_at);
+    monitorState.postedUpdateIds = resolvedUpdates.map(({ update }) => update.id).slice(-500);
     monitorState.lastPostedAt = new Date().toISOString();
-    console.log(`Seeded ${monitorState.postedUpdateIds.length} existing incident updates without posting for "${monitor.id}".`);
+    console.log(`Seeded ${monitorState.postedUpdateIds.length} resolved incident updates without posting for "${monitor.id}".`);
     return;
   }
 
