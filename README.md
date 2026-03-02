@@ -21,6 +21,8 @@ Copy `.env.example` to `.env` and fill in:
 - `STATUSPAGE_MONITORS_JSON`: optional JSON array for multiple monitor targets; each object needs `id`, `channelId`, `baseUrl`, and optional `label`
 - `POLL_INTERVAL_MS`: optional, defaults to `60000`
 - `POST_EXISTING_UPDATES_ON_START`: optional, defaults to `false`; when `true`, the bot will backfill currently visible incident updates on first run
+- `ENABLE_STATUS_COMMAND`: optional, defaults to `true`
+- `ENABLE_TEST_COMMAND`: optional, defaults to `true`
 - `ENABLE_REPLAY_COMMAND`: optional, defaults to `true`
 - `ENABLE_CLEAN_COMMAND`: optional, defaults to `true`
 
