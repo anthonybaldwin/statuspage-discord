@@ -6,8 +6,7 @@ A Bun-based Discord bot that:
 - answers slash-command status questions with the current page health
 - supports replay and preview flows so you can test notifications without waiting for a live incident
 
-<img width="25%" alt="image" src="https://github.com/user-attachments/assets/6a4f3105-c4da-4fa8-ac58-b19a0a831243" /><br>
-<img width="25%" alt="image" src="https://github.com/user-attachments/assets/565ea990-f569-424d-b4c2-da7e68a648da" />
+<img width="250" alt="image" src="https://github.com/user-attachments/assets/31e86352-ac97-4641-833d-ba775023ea63" />
 
 ## Environment
 
