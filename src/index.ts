@@ -1,5 +1,6 @@
 import {
   APIEmbedField,
+  AutocompleteInteraction,
   ChannelType,
   ChatInputCommandInteraction,
   Client,
@@ -8,6 +9,8 @@ import {
   GatewayIntentBits,
   Message,
   MessageFlags,
+  MessageType,
+  PermissionFlagsBits,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -59,9 +62,19 @@ const envSchema = z.object({
   ENABLE_CLEAN_COMMAND: booleanFromEnv.default(true),
   ENABLE_STATUS_COMMAND: booleanFromEnv.default(true),
   ENABLE_TEST_COMMAND: booleanFromEnv.default(true),
+  ENABLE_MONITOR_COMMAND: booleanFromEnv.default(true),
 });
 
 type MonitorConfig = z.infer<typeof monitorSchema>;
+
+type RuntimeMonitorEntry = MonitorConfig & {
+  addedBy: string;
+  addedAt: string;
+};
+
+type RuntimeMonitorFile = {
+  monitors: RuntimeMonitorEntry[];
+};
 
 function loadMonitors(env: z.infer<typeof envSchema>): MonitorConfig[] {
   if (env.STATUSPAGE_MONITORS_JSON) {
@@ -85,9 +98,47 @@ function loadMonitors(env: z.infer<typeof envSchema>): MonitorConfig[] {
 }
 
 const env = envSchema.parse(process.env);
-const monitors = loadMonitors(env);
+const envMonitors = loadMonitors(env);
+const envMonitorIds = new Set(envMonitors.map((m) => m.id));
+let monitors: MonitorConfig[] = [...envMonitors];
 const statePath = resolve("data", "state.json");
+const runtimeMonitorsPath = resolve("data", "monitors.json");
 const monitorIcons = new Map<string, string>();
+
+// Simple promise-chain lock for read-modify-write safety on monitors.json.
+let monitorLockChain = Promise.resolve();
+function withMonitorLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = monitorLockChain.then(fn, fn);
+  monitorLockChain = next.then(() => {}, () => {});
+  return next;
+}
+
+async function readRuntimeMonitors(): Promise<RuntimeMonitorEntry[]> {
+  try {
+    const raw = await readFile(runtimeMonitorsPath, "utf8");
+    const parsed = JSON.parse(raw) as RuntimeMonitorFile;
+    return parsed.monitors ?? [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeRuntimeMonitors(entries: RuntimeMonitorEntry[]) {
+  await mkdir(dirname(runtimeMonitorsPath), { recursive: true });
+  const data: RuntimeMonitorFile = { monitors: entries };
+  await writeFile(runtimeMonitorsPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+function rebuildMonitors(runtime: RuntimeMonitorEntry[]) {
+  // Env monitors take precedence — runtime supplements.
+  const merged: MonitorConfig[] = [...envMonitors];
+  for (const entry of runtime) {
+    if (!envMonitorIds.has(entry.id)) {
+      merged.push(entry);
+    }
+  }
+  monitors = merged;
+}
 
 async function fetchMonitorIcon(monitor: MonitorConfig): Promise<string | undefined> {
   try {
@@ -188,7 +239,7 @@ const defaultState: BotState = {
 };
 
 function buildCommands() {
-  const built: ReturnType<SlashCommandBuilder["addStringOption"]>[] = [];
+  const built: Array<{ toJSON(): unknown }> = [];
 
   if (env.ENABLE_STATUS_COMMAND) {
     built.push(
@@ -199,7 +250,8 @@ function buildCommands() {
           option
             .setName("target")
             .setDescription("Optional monitor id when more than one status page is configured.")
-            .setRequired(false),
+            .setRequired(false)
+            .setAutocomplete(true),
         ),
     );
   }
@@ -209,11 +261,13 @@ function buildCommands() {
       new SlashCommandBuilder()
         .setName("testpost")
         .setDescription("Post a preview of the current status without marking anything as sent.")
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addStringOption((option) =>
           option
             .setName("target")
             .setDescription("Optional monitor id when more than one status page is configured.")
-            .setRequired(false),
+            .setRequired(false)
+            .setAutocomplete(true),
         ),
     );
   }
@@ -223,11 +277,13 @@ function buildCommands() {
       new SlashCommandBuilder()
         .setName("replay")
         .setDescription("Replay active incident timelines into their configured threads for testing.")
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addStringOption((option) =>
           option
             .setName("target")
             .setDescription("Optional monitor id when more than one status page is configured.")
-            .setRequired(false),
+            .setRequired(false)
+            .setAutocomplete(true),
         ),
     );
   }
@@ -237,6 +293,7 @@ function buildCommands() {
       new SlashCommandBuilder()
         .setName("clean")
         .setDescription("Delete recent bot-authored messages in the current channel.")
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addIntegerOption((option) =>
           option
             .setName("limit")
@@ -248,10 +305,51 @@ function buildCommands() {
     );
   }
 
+  if (env.ENABLE_MONITOR_COMMAND) {
+    built.push(
+      new SlashCommandBuilder()
+        .setName("monitor")
+        .setDescription("Manage runtime Statuspage monitors.")
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+        .addSubcommand((sub) =>
+          sub
+            .setName("add")
+            .setDescription("Add a new Statuspage monitor.")
+            .addStringOption((opt) =>
+              opt.setName("url").setDescription("Public Statuspage URL (e.g. https://status.atlassian.com)").setRequired(true),
+            )
+            .addChannelOption((opt) =>
+              opt
+                .setName("channel")
+                .setDescription("Channel to post updates in. Defaults to the current channel.")
+                .addChannelTypes(ChannelType.GuildText)
+                .setRequired(false),
+            )
+            .addStringOption((opt) =>
+              opt.setName("label").setDescription("Display name for the monitor.").setRequired(false),
+            )
+            .addStringOption((opt) =>
+              opt.setName("id").setDescription("Unique ID for the monitor. Auto-derived from page name if omitted.").setRequired(false),
+            ),
+        )
+        .addSubcommand((sub) =>
+          sub
+            .setName("remove")
+            .setDescription("Remove a runtime monitor.")
+            .addStringOption((opt) =>
+              opt.setName("id").setDescription("Monitor ID to remove.").setRequired(true).setAutocomplete(true),
+            ),
+        )
+        .addSubcommand((sub) =>
+          sub.setName("list").setDescription("List all configured monitors."),
+        ),
+    );
+  }
+
   return built.map((command) => command.toJSON());
 }
 
-const commands = buildCommands();
+let commands = buildCommands();
 
 async function ensureStateFile() {
   await mkdir(dirname(statePath), { recursive: true });
@@ -765,6 +863,31 @@ function getReplaySkippedText(skippedIncidents: Incident[]) {
   return `Skipped incidents that already have live thread messages: ${incidentNames}.`;
 }
 
+async function handleAutocomplete(interaction: AutocompleteInteraction) {
+  const focused = interaction.options.getFocused(true);
+  const query = focused.value.toLowerCase();
+
+  if (interaction.commandName === "monitor" && focused.name === "id") {
+    // Only show runtime monitors for /monitor remove
+    const runtimeEntries = await readRuntimeMonitors();
+    const filtered = runtimeEntries
+      .filter((entry) => entry.id.toLowerCase().includes(query) || (entry.label?.toLowerCase().includes(query) ?? false))
+      .slice(0, 25)
+      .map((entry) => ({ name: entry.label ? `${entry.id} (${entry.label})` : entry.id, value: entry.id }));
+    await interaction.respond(filtered);
+    return;
+  }
+
+  // For target option on /status, /testpost, /replay — show all monitors
+  if (focused.name === "target") {
+    const filtered = monitors
+      .filter((m) => m.id.toLowerCase().includes(query) || (m.label?.toLowerCase().includes(query) ?? false))
+      .slice(0, 25)
+      .map((m) => ({ name: m.label ? `${m.id} (${m.label})` : m.id, value: m.id }));
+    await interaction.respond(filtered);
+  }
+}
+
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(env.DISCORD_TOKEN);
   const route = env.DISCORD_GUILD_ID
@@ -827,6 +950,23 @@ async function assertMonitorChannelAccess(
   throw new Error(`This command can only be used in <#${monitor.channelId}> or its incident threads.`);
 }
 
+async function deleteOlderPinNotifications(channel: TextChannel) {
+  try {
+    const recent = await channel.messages.fetch({ limit: 25 });
+    const pinNotifications = recent
+      .filter((m) => m.type === MessageType.ChannelPinnedMessage)
+      .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+    // Keep the newest, delete the rest.
+    for (const msg of pinNotifications.values()) {
+      if (msg.id !== pinNotifications.first()!.id) {
+        await msg.delete().catch(() => null);
+      }
+    }
+  } catch {
+    // Best-effort — don't block the flow if we lack Manage Messages.
+  }
+}
+
 async function ensureIncidentThread(
   channel: TextChannel,
   monitorState: MonitorState,
@@ -871,6 +1011,7 @@ async function ensureIncidentThread(
 
   if (!incident.resolved_at) {
     await parentMessage.pin().catch(() => null);
+    await deleteOlderPinNotifications(channel);
   }
 
   const thread = await parentMessage.startThread({
@@ -910,6 +1051,7 @@ async function syncIncidentParentMessage(
 
     if (!incident.resolved_at && !message.pinned) {
       await message.pin().catch(() => null);
+      await deleteOlderPinNotifications(channel);
     } else if (incident.resolved_at && message.pinned) {
       await message.unpin().catch(() => null);
     }
@@ -1001,7 +1143,7 @@ async function handleStatusCommand(interaction: ChatInputCommandInteraction) {
     throw new Error("/status is disabled.");
   }
 
-  await interaction.deferReply();
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const monitor = resolveMonitor(interaction);
   const state = await readState();
   await assertMonitorChannelAccess(interaction, monitor, state);
@@ -1188,8 +1330,210 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
   });
 }
 
+function deriveMonitorId(pageName: string): string {
+  return pageName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 32);
+}
+
+async function handleMonitorAdd(interaction: ChatInputCommandInteraction, client: Client) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const rawUrl = interaction.options.getString("url", true);
+  const baseUrl = rawUrl.replace(/\/+$/, "");
+  const channel = interaction.options.getChannel("channel") ?? interaction.channel;
+  const channelId = channel?.id;
+
+  if (!channelId) {
+    throw new Error("Could not determine a target channel.");
+  }
+
+  // Validate the URL by fetching the summary endpoint.
+  let summary: Summary;
+  try {
+    const response = await fetch(`${baseUrl}/api/v2/summary.json`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    summary = (await response.json()) as Summary;
+  } catch {
+    throw new Error(`Could not reach a valid Statuspage at \`${baseUrl}\`. Make sure the URL points to a public Statuspage (e.g. \`https://status.atlassian.com\`).`);
+  }
+
+  // Check bot permissions in target channel.
+  const targetChannel = await client.channels.fetch(channelId);
+  if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
+    throw new Error(`<#${channelId}> must be a text channel.`);
+  }
+  const botMember = (targetChannel as TextChannel).guild.members.me;
+  if (botMember) {
+    const perms = (targetChannel as TextChannel).permissionsFor(botMember);
+    if (!perms?.has("SendMessages") || !perms.has("EmbedLinks") || !perms.has("CreatePublicThreads")) {
+      throw new Error(`I'm missing permissions in <#${channelId}>. I need **Send Messages**, **Embed Links**, and **Create Public Threads**.`);
+    }
+  }
+
+  const label = interaction.options.getString("label") ?? undefined;
+  const providedId = interaction.options.getString("id") ?? undefined;
+  const monitorId = providedId ?? deriveMonitorId(summary.page.name);
+
+  if (!monitorId) {
+    throw new Error("Could not derive a monitor ID. Please provide one with the `id` option.");
+  }
+
+  // Collision check.
+  if (monitors.some((m) => m.id === monitorId)) {
+    const source = envMonitorIds.has(monitorId) ? " (configured via environment)" : "";
+    throw new Error(`A monitor with ID \`${monitorId}\` already exists${source}.`);
+  }
+
+  // Duplicate URL+channel check.
+  if (monitors.some((m) => m.baseUrl.replace(/\/+$/, "") === baseUrl && m.channelId === channelId)) {
+    throw new Error(`A monitor for \`${baseUrl}\` in <#${channelId}> already exists.`);
+  }
+
+  const entry: RuntimeMonitorEntry = {
+    id: monitorId,
+    channelId,
+    baseUrl,
+    label,
+    addedBy: interaction.user.id,
+    addedAt: new Date().toISOString(),
+  };
+
+  await withMonitorLock(async () => {
+    const existing = await readRuntimeMonitors();
+    existing.push(entry);
+    await writeRuntimeMonitors(existing);
+    rebuildMonitors(existing);
+  });
+
+  // Cache icon for the new monitor.
+  const icon = await fetchMonitorIcon(entry);
+  if (icon) {
+    monitorIcons.set(monitorId, icon);
+  }
+
+  // Re-register commands so autocomplete picks up the new monitor.
+  commands = buildCommands();
+  await registerCommands();
+
+  // Trigger immediate first poll.
+  try {
+    const state = await readState();
+    await postLatestUpdatesForMonitor(client, entry, state);
+    await writeState(state);
+  } catch (error) {
+    console.error(`First poll for new monitor "${monitorId}" failed.`, error);
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(statusColor(summary.status.indicator))
+    .setAuthor({
+      name: "Monitor Added",
+      iconURL: monitorIcons.get(monitorId),
+    })
+    .setTitle(monitorDisplayName(entry, summary.page.name))
+    .addFields(
+      { name: "ID", value: `\`${monitorId}\``, inline: true },
+      { name: "URL", value: baseUrl, inline: true },
+      { name: "Channel", value: `<#${channelId}>`, inline: true },
+      { name: "Status", value: statusLabel(summary.status.indicator), inline: true },
+    )
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleMonitorRemove(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const monitorId = interaction.options.getString("id", true);
+
+  if (envMonitorIds.has(monitorId)) {
+    throw new Error(`Monitor \`${monitorId}\` is configured via environment variables. Remove it from your config instead.`);
+  }
+
+  let removed = false;
+  let removedChannelId: string | undefined;
+
+  await withMonitorLock(async () => {
+    const existing = await readRuntimeMonitors();
+    const index = existing.findIndex((entry) => entry.id === monitorId);
+    if (index === -1) {
+      throw new Error(`No runtime monitor with ID \`${monitorId}\` found.`);
+    }
+    removedChannelId = existing[index].channelId;
+    existing.splice(index, 1);
+    await writeRuntimeMonitors(existing);
+    rebuildMonitors(existing);
+    removed = true;
+  });
+
+  if (removed) {
+    monitorIcons.delete(monitorId);
+    commands = buildCommands();
+    await registerCommands();
+  }
+
+  const channelMention = removedChannelId ? ` Use \`/clean\` in <#${removedChannelId}> to remove them.` : "";
+  await interaction.editReply({
+    content: `Removed monitor \`${monitorId}\`. Existing threads preserved.${channelMention}`,
+  });
+}
+
+async function handleMonitorList(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  if (monitors.length === 0) {
+    await interaction.editReply({
+      content: "No monitors configured. Use `/monitor add` or set `STATUSPAGE_MONITORS_JSON`.",
+    });
+    return;
+  }
+
+  const runtimeEntries = await readRuntimeMonitors();
+  const runtimeMap = new Map(runtimeEntries.map((e) => [e.id, e]));
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("Configured Monitors")
+    .setTimestamp();
+
+  for (const monitor of monitors) {
+    const isEnv = envMonitorIds.has(monitor.id);
+    const source = isEnv ? "env" : "runtime";
+    const lines = [
+      `**Source:** \`${source}\``,
+      `**URL:** ${monitor.baseUrl}`,
+      `**Channel:** <#${monitor.channelId}>`,
+    ];
+
+    if (!isEnv) {
+      const runtime = runtimeMap.get(monitor.id);
+      if (runtime) {
+        lines.push(`**Added by:** <@${runtime.addedBy}>`);
+        lines.push(`**Added:** ${formatTimestamp(runtime.addedAt)}`);
+      }
+    }
+
+    embed.addFields({
+      name: `${monitorDisplayName(monitor)} (\`${monitor.id}\`)`,
+      value: lines.join("\n"),
+    });
+  }
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
 async function main() {
   await ensureStateFile();
+  const runtimeEntries = await readRuntimeMonitors();
+  rebuildMonitors(runtimeEntries);
   await cacheMonitorIcons();
   await registerCommands();
 
@@ -1214,6 +1558,15 @@ async function main() {
   });
 
   client.on("interactionCreate", async (interaction) => {
+    if (interaction.isAutocomplete()) {
+      try {
+        await handleAutocomplete(interaction);
+      } catch (error) {
+        console.error("Autocomplete handler failed.", error);
+      }
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) {
       return;
     }
@@ -1236,6 +1589,18 @@ async function main() {
 
       if (interaction.commandName === "clean") {
         await handleCleanCommand(interaction);
+        return;
+      }
+
+      if (interaction.commandName === "monitor") {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "add") {
+          await handleMonitorAdd(interaction, client);
+        } else if (sub === "remove") {
+          await handleMonitorRemove(interaction);
+        } else if (sub === "list") {
+          await handleMonitorList(interaction);
+        }
         return;
       }
     } catch (error) {
