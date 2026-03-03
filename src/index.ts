@@ -487,6 +487,8 @@ function impactColor(impact: string, status?: string) {
   }
 }
 
+const MISSING_INCIDENT_COLOR = 0x95a5a6;
+
 function incidentStateLabel(status: string) {
   switch (status.toLowerCase()) {
     case "investigating":
@@ -606,6 +608,22 @@ function renderParentEmbed(monitor: MonitorConfig, incident: Incident) {
   }
 
   return embed;
+}
+
+function renderMissingParentEmbed(monitor: MonitorConfig, incidentName: string) {
+  return new EmbedBuilder()
+    .setColor(MISSING_INCIDENT_COLOR)
+    .setAuthor({
+      name: `${monitorDisplayName(monitor)} Incident`,
+      iconURL: monitorIcons.get(monitor.id),
+    })
+    .setTitle(incidentName)
+    .setDescription("This incident is no longer available on the status page.")
+    .addFields(
+      { name: "Status", value: "Removed", inline: true },
+    )
+    .setFooter({ text: "Removed" })
+    .setTimestamp(new Date());
 }
 
 function summaryFields(summary: Summary): APIEmbedField[] {
@@ -1051,6 +1069,67 @@ async function syncIncidentParentMessage(
   }
 }
 
+async function handleMissingIncidents(
+  client: Client,
+  channel: TextChannel,
+  monitorState: MonitorState,
+  monitor: MonitorConfig,
+  apiIncidentIds: Set<string>,
+) {
+  for (const [incidentId, incidentState] of Object.entries(monitorState.incidents)) {
+    if (incidentState.resolvedAt) continue;
+    if (apiIncidentIds.has(incidentId)) continue;
+
+    console.log(
+      `Incident "${incidentId}" for monitor "${monitor.id}" is no longer in the API. Marking as removed.`,
+    );
+
+    try {
+      const parentMessage = await channel.messages.fetch(incidentState.parentMessageId);
+      const thread = await client.channels.fetch(incidentState.threadId);
+
+      const incidentName = thread?.isThread() ? thread.name : "Unknown Incident";
+      await parentMessage.edit({ embeds: [renderMissingParentEmbed(monitor, incidentName)] });
+
+      if (parentMessage.pinned) {
+        await parentMessage.unpin().catch(() => null);
+      }
+
+      if (thread?.isThread()) {
+        for (const messageId of Object.values(incidentState.updateMessageIds)) {
+          try {
+            const msg = await thread.messages.fetch(messageId);
+            if (msg.embeds.length > 0) {
+              const greyEmbed = EmbedBuilder.from(msg.embeds[0]).setColor(MISSING_INCIDENT_COLOR);
+              await msg.edit({ embeds: [greyEmbed] });
+            }
+          } catch {
+            // Update message may have been deleted, skip.
+          }
+        }
+
+        if (!thread.archived) {
+          await thread.setArchived(true, "Incident no longer available on status page");
+        }
+      }
+
+      incidentState.resolvedAt = new Date().toISOString();
+    } catch (error) {
+      if (
+        error instanceof DiscordAPIError &&
+        (error.code === 10003 || error.code === 10008 || error.code === 50001)
+      ) {
+        delete monitorState.incidents[incidentId];
+      } else {
+        console.error(
+          `Failed to handle missing incident "${incidentId}" for monitor "${monitor.id}":`,
+          error,
+        );
+      }
+    }
+  }
+}
+
 async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfig, state: BotState) {
   const [incidents, channel] = await Promise.all([
     fetchIncidents(monitor),
@@ -1076,10 +1155,6 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
   }
 
   const unseen = allUpdates.filter(({ update }) => !monitorState.postedUpdateIds.includes(update.id));
-
-  if (unseen.length === 0) {
-    return;
-  }
 
   for (const { incident, update } of unseen) {
     const { parentMessage, thread } = await ensureIncidentThread(channel, monitorState, monitor, incident);
@@ -1109,6 +1184,9 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
     monitorState.postedUpdateIds.push(update.id);
     monitorState.lastPostedAt = new Date().toISOString();
   }
+
+  const apiIncidentIds = new Set(incidents.map((incident) => incident.id));
+  await handleMissingIncidents(client, channel, monitorState, monitor, apiIncidentIds);
 
   monitorState.postedUpdateIds = monitorState.postedUpdateIds.slice(-500);
 }
