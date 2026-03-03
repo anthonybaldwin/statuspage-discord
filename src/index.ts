@@ -9,6 +9,7 @@ import {
   GatewayIntentBits,
   Message,
   MessageFlags,
+  MessageType,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -949,6 +950,23 @@ async function assertMonitorChannelAccess(
   throw new Error(`This command can only be used in <#${monitor.channelId}> or its incident threads.`);
 }
 
+async function deleteOlderPinNotifications(channel: TextChannel) {
+  try {
+    const recent = await channel.messages.fetch({ limit: 25 });
+    const pinNotifications = recent
+      .filter((m) => m.type === MessageType.ChannelPinnedMessage)
+      .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+    // Keep the newest, delete the rest.
+    for (const msg of pinNotifications.values()) {
+      if (msg.id !== pinNotifications.first()!.id) {
+        await msg.delete().catch(() => null);
+      }
+    }
+  } catch {
+    // Best-effort — don't block the flow if we lack Manage Messages.
+  }
+}
+
 async function ensureIncidentThread(
   channel: TextChannel,
   monitorState: MonitorState,
@@ -993,7 +1011,7 @@ async function ensureIncidentThread(
 
   if (!incident.resolved_at) {
     await parentMessage.pin().catch(() => null);
-
+    await deleteOlderPinNotifications(channel);
   }
 
   const thread = await parentMessage.startThread({
@@ -1033,7 +1051,7 @@ async function syncIncidentParentMessage(
 
     if (!incident.resolved_at && !message.pinned) {
       await message.pin().catch(() => null);
-  
+      await deleteOlderPinNotifications(channel);
     } else if (incident.resolved_at && message.pinned) {
       await message.unpin().catch(() => null);
     }
