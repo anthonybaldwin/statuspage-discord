@@ -1086,6 +1086,15 @@ async function handleMissingIncidents(
 
     try {
       const parentMessage = await channel.messages.fetch(incidentState.parentMessageId);
+
+      // If the embed is already green (resolved), the incident was properly resolved
+      // before it aged out of the API. Just update state and skip ghosting.
+      const RESOLVED_GREEN = 0x2fb344;
+      if (parentMessage.embeds[0]?.color === RESOLVED_GREEN) {
+        incidentState.resolvedAt = new Date().toISOString();
+        continue;
+      }
+
       const thread = await client.channels.fetch(incidentState.threadId);
 
       const incidentName = thread?.isThread() ? thread.name : "Unknown Incident";
