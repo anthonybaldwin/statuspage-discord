@@ -953,14 +953,13 @@ async function assertMonitorChannelAccess(
 async function deleteOlderPinNotifications(channel: TextChannel) {
   try {
     const recent = await channel.messages.fetch({ limit: 25 });
-    const pinNotifications = recent
-      .filter((m) => m.type === MessageType.ChannelPinnedMessage)
+    const cutoff = Date.now() - 60_000;
+    const pinAlerts = recent
+      .filter((m) => m.type === MessageType.ChannelPinnedMessage && m.createdTimestamp >= cutoff)
       .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
     // Keep the newest, delete the rest.
-    for (const msg of pinNotifications.values()) {
-      if (msg.id !== pinNotifications.first()!.id) {
-        await msg.delete().catch(() => null);
-      }
+    for (const msg of pinAlerts.toJSON().slice(1)) {
+      await msg.delete().catch(() => null);
     }
   } catch {
     // Best-effort — don't block the flow if we lack Manage Messages.
