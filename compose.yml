@@ -3,5 +3,8 @@ services:
     build: .
     env_file: .env
     volumes:
-      - ./data:/app/data
+      - statuspage_data:/app/data
     restart: unless-stopped
+
+volumes:
+  statuspage_data:
