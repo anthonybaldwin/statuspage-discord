@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths:
+      - "src/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
+      - ".github/workflows/docker.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
