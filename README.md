@@ -65,7 +65,7 @@ The simplest way to run in production. Secrets stay in your host-side `.env` and
 docker compose up -d
 ```
 
-State persists in `./data` across restarts.
+State persists in the `statuspage_data` named volume across restarts and container recreations (e.g. image updates via WUD or Watchtower).
 
 ## Docker (manual)
 
@@ -78,7 +78,7 @@ docker build -t statuspage-discord .
 Run it with your local `.env` passed at runtime:
 
 ```bash
-docker run --rm --env-file .env -v ./data:/app/data statuspage-discord
+docker run --rm --env-file .env -v statuspage_data:/app/data statuspage-discord
 ```
 
 A prebuilt image is also available from the GitHub Container Registry:
