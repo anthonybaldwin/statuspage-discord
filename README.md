@@ -1,14 +1,14 @@
 # statuspage-discord
 
-| 🚨 | 🧵 | 📌 | `/status` |
-  |---|---|---|---|
-  | <a href="https://github.com/user-attachments/assets/39b6ee5d-851b-42ea-b828-5c2aed2d54a7" target="_blank"><img width="160" alt="image" src="https://github.com/user-attachments/assets/39b6ee5d-851b-42ea-b828-5c2aed2d54a7" /></a> | <a href="https://github.com/user-attachments/assets/65c101c1-20ba-4c0a-83e0-c79266e274d4" target="_blank"><img width="120" alt="image" src="https://github.com/user-attachments/assets/65c101c1-20ba-4c0a-83e0-c79266e274d4" /></a> | <a href="https://github.com/user-attachments/assets/c6e762a4-2770-4149-adaa-7d01484cc316" target="_blank"><img width="140" alt="image" src="https://github.com/user-attachments/assets/c6e762a4-2770-4149-adaa-7d01484cc316" /></a> | <a href="https://github.com/user-attachments/assets/f9e32a7c-b167-4bd9-91aa-b99064f8a899" target="_blank"><img width="200" alt="image" src="https://github.com/user-attachments/assets/f9e32a7c-b167-4bd9-91aa-b99064f8a899" /></a> |
-
 A Bun-based Discord bot that:
 
 - polls one or more Statuspage pages and groups each incident into its own Discord thread
 - answers slash-command status questions with the current page health
 - supports replay and preview flows so you can test notifications without waiting for a live incident
+
+| 🚨 | 🧵 | 📌 | `/status` |
+  |---|---|---|---|
+  | <a href="https://github.com/user-attachments/assets/39b6ee5d-851b-42ea-b828-5c2aed2d54a7" target="_blank"><img width="160" alt="image" src="https://github.com/user-attachments/assets/39b6ee5d-851b-42ea-b828-5c2aed2d54a7" /></a> | <a href="https://github.com/user-attachments/assets/65c101c1-20ba-4c0a-83e0-c79266e274d4" target="_blank"><img width="120" alt="image" src="https://github.com/user-attachments/assets/65c101c1-20ba-4c0a-83e0-c79266e274d4" /></a> | <a href="https://github.com/user-attachments/assets/c6e762a4-2770-4149-adaa-7d01484cc316" target="_blank"><img width="140" alt="image" src="https://github.com/user-attachments/assets/c6e762a4-2770-4149-adaa-7d01484cc316" /></a> | <a href="https://github.com/user-attachments/assets/f9e32a7c-b167-4bd9-91aa-b99064f8a899" target="_blank"><img width="200" alt="image" src="https://github.com/user-attachments/assets/f9e32a7c-b167-4bd9-91aa-b99064f8a899" /></a> |
 
 ## Environment
 
