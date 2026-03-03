@@ -26,6 +26,7 @@ Copy `.env.example` to `.env` and fill in:
 - `ENABLE_TEST_COMMAND`: optional, defaults to `true`
 - `ENABLE_REPLAY_COMMAND`: optional, defaults to `true`
 - `ENABLE_CLEAN_COMMAND`: optional, defaults to `true`
+- `ENABLE_MONITOR_COMMAND`: optional, defaults to `true`; enables the `/monitor` command for adding/removing monitors at runtime
 
 Example multi-monitor config:
 
@@ -39,6 +40,9 @@ STATUSPAGE_MONITORS_JSON=[{"id":"atlassian","channelId":"123456789012345678","ba
 - `/testpost [target]`: post the current status snapshot into the configured channel without marking any update as sent
 - `/replay [target]`: replay each active incident timeline into the relevant thread when enabled
 - `/clean [limit]`: delete recent bot-authored messages in the current channel when enabled
+- `/monitor add <url> [channel] [label] [id]`: add a new Statuspage monitor at runtime (requires **Manage Server**)
+- `/monitor remove <id>`: remove a runtime monitor — env-configured monitors are protected (requires **Manage Server**)
+- `/monitor list`: list all monitors with their source (`env` or `runtime`), URL, and channel (requires **Manage Server**)
 
 ## Run
 
@@ -86,6 +90,7 @@ docker pull ghcr.io/anthonybaldwin/statuspage-discord:main
 ## Notes
 
 - Posted incident update IDs are persisted in `data/state.json`.
+- Runtime monitors added via `/monitor add` are persisted in `data/monitors.json` and survive restarts.
 - Incident parent message IDs and thread IDs are persisted in `data/state.json`.
 - The bot uses the public Statuspage API under `<base-url>/api/v2/...`, so a public page URL is enough.
 - For development, setting `DISCORD_GUILD_ID` makes slash-command registration update faster than global commands.
