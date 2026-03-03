@@ -57,12 +57,12 @@ const envSchema = z.object({
   STATUSPAGE_BASE_URL: z.string().url().optional(),
   STATUSPAGE_MONITORS_JSON: z.string().optional(),
   POLL_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
-  POST_EXISTING_UPDATES_ON_START: booleanFromEnv.default(false),
-  ENABLE_REPLAY_COMMAND: booleanFromEnv.default(true),
-  ENABLE_CLEAN_COMMAND: booleanFromEnv.default(true),
-  ENABLE_STATUS_COMMAND: booleanFromEnv.default(true),
-  ENABLE_TEST_COMMAND: booleanFromEnv.default(true),
-  ENABLE_MONITOR_COMMAND: booleanFromEnv.default(true),
+  POST_EXISTING_UPDATES_ON_START: booleanFromEnv.default("false"),
+  ENABLE_REPLAY_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_CLEAN_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_STATUS_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_TEST_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_MONITOR_COMMAND: booleanFromEnv.default("true"),
 });
 
 type MonitorConfig = z.infer<typeof monitorSchema>;
