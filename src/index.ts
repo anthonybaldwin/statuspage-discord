@@ -9,7 +9,6 @@ import {
   GatewayIntentBits,
   Message,
   MessageFlags,
-  MessageType,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -57,12 +56,12 @@ const envSchema = z.object({
   STATUSPAGE_BASE_URL: z.string().url().optional(),
   STATUSPAGE_MONITORS_JSON: z.string().optional(),
   POLL_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
-  POST_EXISTING_UPDATES_ON_START: booleanFromEnv.default(false),
-  ENABLE_REPLAY_COMMAND: booleanFromEnv.default(true),
-  ENABLE_CLEAN_COMMAND: booleanFromEnv.default(true),
-  ENABLE_STATUS_COMMAND: booleanFromEnv.default(true),
-  ENABLE_TEST_COMMAND: booleanFromEnv.default(true),
-  ENABLE_MONITOR_COMMAND: booleanFromEnv.default(true),
+  POST_EXISTING_UPDATES_ON_START: booleanFromEnv.default("false"),
+  ENABLE_REPLAY_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_CLEAN_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_STATUS_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_TEST_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_MONITOR_COMMAND: booleanFromEnv.default("true"),
 });
 
 type MonitorConfig = z.infer<typeof monitorSchema>;
@@ -950,22 +949,6 @@ async function assertMonitorChannelAccess(
   throw new Error(`This command can only be used in <#${monitor.channelId}> or its incident threads.`);
 }
 
-async function deleteOlderPinNotifications(channel: TextChannel) {
-  try {
-    const recent = await channel.messages.fetch({ limit: 25 });
-    const pinNotifications = recent
-      .filter((m) => m.type === MessageType.ChannelPinnedMessage)
-      .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
-    // Keep the newest, delete the rest.
-    for (const msg of pinNotifications.values()) {
-      if (msg.id !== pinNotifications.first()!.id) {
-        await msg.delete().catch(() => null);
-      }
-    }
-  } catch {
-    // Best-effort — don't block the flow if we lack Manage Messages.
-  }
-}
 
 async function ensureIncidentThread(
   channel: TextChannel,
@@ -1011,7 +994,7 @@ async function ensureIncidentThread(
 
   if (!incident.resolved_at) {
     await parentMessage.pin().catch(() => null);
-    await deleteOlderPinNotifications(channel);
+
   }
 
   const thread = await parentMessage.startThread({
@@ -1051,7 +1034,7 @@ async function syncIncidentParentMessage(
 
     if (!incident.resolved_at && !message.pinned) {
       await message.pin().catch(() => null);
-      await deleteOlderPinNotifications(channel);
+  
     } else if (incident.resolved_at && message.pinned) {
       await message.unpin().catch(() => null);
     }
