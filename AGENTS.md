@@ -135,11 +135,33 @@ feat/, fix/, chore/, perf/, refactor/, docs/, ci/
 - Keep the description current when adding/removing commits.
 - Note any workflow/deploy impact when relevant.
 
+### Commit Message Format
+
+Use [Conventional Commits](https://conventionalcommits.org):
+
+```
+<type>(<scope>): <short summary>
+```
+
+Allowed types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`
+
+Rules:
+- Use imperative tense ("add feature", not "added feature").
+- Keep subject line under ~72 characters.
+- Use scope when meaningful (e.g., `fix(polling): handle 429 rate limits`).
+- Add a body for **why** / risk / validation when the subject alone isn't sufficient.
+- Commit message bodies must use real newlines, not escaped `\n` sequences.
+
 ### Commit Hygiene
 
 - Keep only commits that should reach `main`; drop experimental/no-op commits before merge.
 - Squash or fixup branch commits when it improves clarity and reduces noise.
-- Keep commit subjects meaningful.
+- Keep commit subjects meaningful — release labels are inferred from commit messages.
+- Commit after every meaningful change; avoid massive "everything changed" commits.
+
+### Git Staging
+
+Always stage files explicitly by name. Never use `git commit -am`, `git add -A`, or `git add .`. Only stage the files you actually modified for the current task.
 
 ### Shell Notes (PR Body)
 
