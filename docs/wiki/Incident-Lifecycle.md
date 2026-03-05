@@ -4,14 +4,20 @@ This page describes how incidents move through their lifecycle from the bot's pe
 
 ## States
 
-```
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Active     │────>│   Resolved   │     │   Removed    │
-│  (pinned)    │     │  (archived)  │     │  (ghosted)   │
-└─────────────┘     └──────────────┘     └──────────────┘
-       │                                        ▲
-       └────────────────────────────────────────┘
-                vanished from API
+```mermaid
+stateDiagram-v2
+  [*] --> Active : New incident from API
+  Active --> Resolved : resolved_at set
+  Active --> Removed : Vanished from API
+
+  Active : Pinned parent embed
+  Active : Thread with updates
+
+  Resolved : Green embed, unpinned
+  Resolved : Thread archived
+
+  Removed : Grey + strikethrough
+  Removed : Thread archived
 ```
 
 ### Active

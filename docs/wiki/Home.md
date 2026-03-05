@@ -23,6 +23,7 @@ A Bun-based Discord bot that monitors [Statuspage.io](https://www.atlassian.com/
 | [API Integration](API-Integration.md) | Statuspage API endpoints and response handling |
 | [Deployment](Deployment.md) | Docker, Docker Compose, CI/CD, and production notes |
 | [Development](Development.md) | Local setup, tooling, and contribution guide |
+| [Contributing](Contributing.md) | How to contribute, code conventions, and documentation rules |
 
 ## Quick Start
 

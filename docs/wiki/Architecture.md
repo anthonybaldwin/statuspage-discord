@@ -6,15 +6,16 @@ statuspage-discord is a single-file TypeScript application (`src/index.ts`, ~170
 
 ## Data Flow
 
-```
-Statuspage API ──poll──> Bot ──compare──> State File
-                          │                    │
-                          │  new updates?       │
-                          ▼                    ▼
-                     Discord API         data/state.json
-                     (threads,           data/monitors.json
-                      embeds,
-                      pins)
+```mermaid
+graph LR
+  A["Statuspage API"] -->|poll every 60s| B["Bot"]
+  B -->|compare update IDs| C["State"]
+  B -->|new updates?| D["Discord API"]
+  C --- E["data/state.json"]
+  C --- F["data/monitors.json"]
+  D --- G["threads"]
+  D --- H["embeds"]
+  D --- I["pins"]
 ```
 
 1. Every `POLL_INTERVAL_MS` (default 60s), the bot fetches `/api/v2/incidents.json` for each monitor
