@@ -65,9 +65,20 @@ Use one of these prefixes:
 feat/, fix/, chore/, perf/, refactor/, docs/, ci/
 ```
 
-### Commit Guidelines
+### Commit Message Format
 
-- Write clear, concise commit messages that describe the **why**, not just the **what**
+Use [Conventional Commits](https://conventionalcommits.org):
+
+```
+<type>(<scope>): <short summary>
+```
+
+Allowed types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`
+
+- Use imperative tense ("add feature", not "added feature")
+- Keep subject line under ~72 characters
+- Use scope when meaningful (e.g., `fix(polling): handle 429 rate limits`)
+- Add a body for **why** / risk / validation when the subject alone isn't sufficient
 - Keep commits focused — one logical change per commit
 - If a commit touches code, include any required documentation updates in the same commit
 - Keep only commits that should reach `main`; drop experimental/no-op commits before merge
