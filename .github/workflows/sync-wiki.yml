@@ -1,0 +1,36 @@
+name: Sync Wiki
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/wiki/**']
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout docs/wiki
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: docs/wiki
+          sparse-checkout-cone-mode: false
+
+      - name: Clone wiki repo
+        run: |
+          git clone "https://x-access-token:${{ secrets.WIKI_SYNC_PAT }}@github.com/anthonybaldwin/statuspage-discord.wiki.git" wiki
+
+      - name: Copy docs into wiki
+        run: cp docs/wiki/*.md wiki/
+
+      - name: Commit and push
+        run: |
+          cd wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to sync"
+            exit 0
+          fi
+          git commit -m "sync: update wiki from docs/wiki"
+          git push
