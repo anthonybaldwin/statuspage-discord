@@ -87,15 +87,32 @@ A prebuilt image is also available from the GitHub Container Registry:
 docker pull ghcr.io/anthonybaldwin/statuspage-discord:main
 ```
 
+## Incident Lifecycle
+
+- **Active:** Parent message pinned, thread created, updates posted to thread
+- **Resolved:** Parent updated (green), unpinned, thread archived
+- **Removed from API:** Parent and updates greyed out with ~~strikethrough~~, thread archived. Deleted incidents are preserved for audit rather than removed.
+- **Self-healing:** If threads or messages are manually deleted, the bot detects missing resources and recreates them on the next update
+
+The bot tracks open incidents server-side (`openIncidentIds`) to reliably detect when incidents vanish from the API.
+
+## Documentation
+
+Full documentation is in [`docs/wiki/`](docs/wiki/Home.md):
+
+- [Architecture](docs/wiki/Architecture.md) — system design and data flow
+- [Configuration](docs/wiki/Configuration.md) — environment variables and multi-monitor setup
+- [Commands](docs/wiki/Commands.md) — slash command reference
+- [Incident Lifecycle](docs/wiki/Incident-Lifecycle.md) — how incidents are tracked
+- [State Management](docs/wiki/State-Management.md) — persistence format
+- [API Integration](docs/wiki/API-Integration.md) — Statuspage API usage
+- [Deployment](docs/wiki/Deployment.md) — Docker, CI/CD, production
+- [Development](docs/wiki/Development.md) — local setup guide
+
 ## Notes
 
-- Posted incident update IDs are persisted in `data/state.json`.
-- Runtime monitors added via `/monitor add` are persisted in `data/monitors.json` and survive restarts.
-- Incident parent message IDs and thread IDs are persisted in `data/state.json`.
 - The bot uses the public Statuspage API under `<base-url>/api/v2/...`, so a public page URL is enough.
 - For development, setting `DISCORD_GUILD_ID` makes slash-command registration update faster than global commands.
 - On first startup, the bot seeds current incident-update IDs without posting them unless `POST_EXISTING_UPDATES_ON_START=true`.
-- New incidents create one parent message in the configured channel and a thread for follow-up updates. The parent message is pinned while the incident is active and unpinned when resolved.
-- When multiple monitors are configured, command `target` values map to the monitor `id` fields.
-- The bot needs permission to create and send messages in threads if you want incident threads to work. It also needs the Manage Messages permission to pin/unpin incident messages.
+- The bot needs Send Messages, Embed Links, Create Public Threads, and Manage Messages permissions.
 - For Docker, keep secrets in a host-side `.env` and pass them with `--env-file` instead of copying them into the image.

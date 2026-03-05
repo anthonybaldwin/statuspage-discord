@@ -212,6 +212,8 @@ type IncidentsResponse = {
 type MonitorState = {
   postedUpdateIds: string[];
   lastPostedAt?: string;
+  /** Running set of incident IDs the bot considers "open". Used to reliably detect ghost closures. */
+  openIncidentIds: string[];
   incidents: Record<
     string,
     {
@@ -230,6 +232,7 @@ type BotState = {
 
 const defaultMonitorState = (): MonitorState => ({
   postedUpdateIds: [],
+  openIncidentIds: [],
   incidents: {},
 });
 
@@ -365,12 +368,15 @@ function getMonitorState(state: BotState, monitorId: string): MonitorState {
     state.monitors[monitorId] = defaultMonitorState();
   }
 
-  for (const incidentState of Object.values(state.monitors[monitorId].incidents)) {
+  const ms = state.monitors[monitorId];
+  ms.openIncidentIds ??= [];
+
+  for (const incidentState of Object.values(ms.incidents)) {
     incidentState.postedUpdateIds ??= [];
     incidentState.updateMessageIds ??= {};
   }
 
-  return state.monitors[monitorId];
+  return ms;
 }
 
 async function readState(): Promise<BotState> {
@@ -392,6 +398,7 @@ async function readState(): Promise<BotState> {
   // Migrate legacy single-monitor state into the default monitor bucket.
   const legacyMonitor = defaultMonitorState();
   legacyMonitor.postedUpdateIds = (parsed as Partial<MonitorState>).postedUpdateIds ?? [];
+  legacyMonitor.openIncidentIds = (parsed as Partial<MonitorState>).openIncidentIds ?? [];
   legacyMonitor.lastPostedAt = (parsed as Partial<MonitorState>).lastPostedAt;
   legacyMonitor.incidents = (parsed as Partial<MonitorState>).incidents ?? {};
 
@@ -617,13 +624,55 @@ function renderMissingParentEmbed(monitor: MonitorConfig, incidentName: string) 
       name: `${monitorDisplayName(monitor)} Incident`,
       iconURL: monitorIcons.get(monitor.id),
     })
-    .setTitle(incidentName)
-    .setDescription("This incident is no longer available on the status page.")
+    .setTitle(`~~${incidentName}~~`)
+    .setDescription("~~This incident is no longer available on the status page.~~")
     .addFields(
-      { name: "Status", value: "Removed", inline: true },
+      { name: "Status", value: "~~Removed~~", inline: true },
     )
     .setFooter({ text: "Removed" })
     .setTimestamp(new Date());
+}
+
+function renderDeletedUpdateEmbed(originalEmbed: EmbedBuilder) {
+  const data = originalEmbed.toJSON();
+  const embed = new EmbedBuilder()
+    .setColor(MISSING_INCIDENT_COLOR)
+    .setTimestamp(data.timestamp ? new Date(data.timestamp) : new Date());
+
+  if (data.author) {
+    embed.setAuthor({
+      name: data.author.name,
+      iconURL: data.author.icon_url,
+    });
+  }
+
+  if (data.title) {
+    embed.setTitle(`~~${data.title.replace(/~~/g, "")}~~`);
+  }
+
+  if (data.description) {
+    embed.setDescription(`~~${data.description.replace(/~~/g, "").slice(0, 3996)}~~`);
+  }
+
+  if (data.fields) {
+    embed.addFields(
+      data.fields.map((field) => ({
+        name: field.name,
+        value: `~~${field.value.replace(/~~/g, "")}~~`,
+        inline: field.inline,
+      })),
+    );
+  }
+
+  if (data.footer) {
+    embed.setFooter({ text: data.footer.text });
+  }
+
+  if (data.url) {
+    embed.setURL(data.url);
+  }
+
+  return embed;
 }
 
 function summaryFields(summary: Summary): APIEmbedField[] {
@@ -998,8 +1047,6 @@ async function ensureIncidentThread(
         (error.code === 10003 || error.code === 10008 || error.code === 50001)
       ) {
         delete monitorState.incidents[incident.id];
-      } else if (error instanceof Error) {
-        delete monitorState.incidents[incident.id];
       } else {
         throw error;
       }
@@ -1075,10 +1122,13 @@ async function handleMissingIncidents(
   monitorState: MonitorState,
   monitor: MonitorConfig,
   apiIncidentIds: Set<string>,
+  vanishedIncidentIds: Set<string>,
 ) {
   for (const [incidentId, incidentState] of Object.entries(monitorState.incidents)) {
     if (incidentState.resolvedAt) continue;
     if (apiIncidentIds.has(incidentId)) continue;
+    // Only ghost incidents we explicitly know were open, or that are tracked but gone.
+    if (!vanishedIncidentIds.has(incidentId)) continue;
 
     console.log(
       `Incident "${incidentId}" for monitor "${monitor.id}" is no longer in the API. Marking as removed.`,
@@ -1109,8 +1159,8 @@ async function handleMissingIncidents(
           try {
             const msg = await thread.messages.fetch(messageId);
             if (msg.embeds.length > 0) {
-              const greyEmbed = EmbedBuilder.from(msg.embeds[0]).setColor(MISSING_INCIDENT_COLOR);
-              await msg.edit({ embeds: [greyEmbed] });
+              const strickenEmbed = renderDeletedUpdateEmbed(EmbedBuilder.from(msg.embeds[0]));
+              await msg.edit({ embeds: [strickenEmbed] });
             }
           } catch {
             // Update message may have been deleted, skip.
@@ -1158,6 +1208,7 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
   if (monitorState.postedUpdateIds.length === 0 && !env.POST_EXISTING_UPDATES_ON_START) {
     const resolvedUpdates = allUpdates.filter(({ incident }) => incident.resolved_at);
     monitorState.postedUpdateIds = resolvedUpdates.map(({ update }) => update.id).slice(-500);
+    monitorState.openIncidentIds = incidents.filter((i) => !i.resolved_at).map((i) => i.id);
     monitorState.lastPostedAt = new Date().toISOString();
     console.log(`Seeded ${monitorState.postedUpdateIds.length} resolved incident updates without posting for "${monitor.id}".`);
     return;
@@ -1195,8 +1246,24 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
   }
 
   const apiIncidentIds = new Set(incidents.map((incident) => incident.id));
-  await handleMissingIncidents(client, channel, monitorState, monitor, apiIncidentIds);
 
+  // Reconcile server-side open incident list against what the API reports.
+  // Incidents the bot tracked as "open" but no longer in the API are candidates for ghosting.
+  const previouslyOpen = new Set(monitorState.openIncidentIds);
+  const vanishedIds = [...previouslyOpen].filter((id) => !apiIncidentIds.has(id));
+  const vanishedIncidentIds = new Set(vanishedIds);
+
+  // Also check for tracked incidents that disappeared (covers pre-openIncidentIds state).
+  for (const id of Object.keys(monitorState.incidents)) {
+    if (!monitorState.incidents[id].resolvedAt && !apiIncidentIds.has(id)) {
+      vanishedIncidentIds.add(id);
+    }
+  }
+
+  await handleMissingIncidents(client, channel, monitorState, monitor, apiIncidentIds, vanishedIncidentIds);
+
+  // Update the canonical open incident list from the API.
+  monitorState.openIncidentIds = incidents.filter((i) => !i.resolved_at).map((i) => i.id);
   monitorState.postedUpdateIds = monitorState.postedUpdateIds.slice(-500);
 }
 
