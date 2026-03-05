@@ -62,6 +62,7 @@ const envSchema = z.object({
   ENABLE_STATUS_COMMAND: booleanFromEnv.default("true"),
   ENABLE_TEST_COMMAND: booleanFromEnv.default("true"),
   ENABLE_MONITOR_COMMAND: booleanFromEnv.default("true"),
+  ENABLE_CLEANUP_COMMAND: booleanFromEnv.default("true"),
 });
 
 type MonitorConfig = z.infer<typeof monitorSchema>;
@@ -303,6 +304,22 @@ function buildCommands() {
             .setMinValue(1)
             .setMaxValue(100)
             .setRequired(false),
+        ),
+    );
+  }
+
+  if (env.ENABLE_CLEANUP_COMMAND) {
+    built.push(
+      new SlashCommandBuilder()
+        .setName("cleanup")
+        .setDescription("Find and ghost dangling incident threads no longer in the status page API.")
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+        .addStringOption((option) =>
+          option
+            .setName("target")
+            .setDescription("Optional monitor id. Omit to clean all monitors.")
+            .setRequired(false)
+            .setAutocomplete(true),
         ),
     );
   }
@@ -1189,6 +1206,59 @@ async function handleMissingIncidents(
   }
 }
 
+async function handleCleanupCommand(interaction: ChatInputCommandInteraction) {
+  if (!env.ENABLE_CLEANUP_COMMAND) throw new Error("/cleanup is disabled.");
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const state = await readState();
+
+  const requested = interaction.options.getString("target") ?? undefined;
+  const targetsToClean: MonitorConfig[] = [];
+  if (requested) {
+    const match = monitors.find((m) => m.id === requested);
+    if (!match) throw new Error(`Unknown target "${requested}".`);
+    targetsToClean.push(match);
+  } else {
+    targetsToClean.push(...monitors);
+  }
+
+  let totalGhosted = 0;
+
+  for (const monitor of targetsToClean) {
+    const [incidents, channel] = await Promise.all([
+      fetchIncidents(monitor),
+      getTargetChannel(interaction.client, monitor),
+    ]);
+    const monitorState = getMonitorState(state, monitor.id);
+    const apiIncidentIds = new Set(incidents.map((i) => i.id));
+
+    const vanishedIncidentIds = new Set<string>();
+    for (const [id, inc] of Object.entries(monitorState.incidents)) {
+      if (!inc.resolvedAt && !apiIncidentIds.has(id)) {
+        vanishedIncidentIds.add(id);
+      }
+    }
+
+    const before = Object.values(monitorState.incidents).filter((i) => !i.resolvedAt).length;
+    await handleMissingIncidents(interaction.client, channel, monitorState, monitor, apiIncidentIds, vanishedIncidentIds);
+    const after = Object.values(monitorState.incidents).filter((i) => !i.resolvedAt).length;
+    totalGhosted += before - after;
+
+    monitorState.openIncidentIds = incidents.filter((i) => !i.resolved_at).map((i) => i.id);
+  }
+
+  await writeState(state);
+
+  const label = targetsToClean.length === 1
+    ? targetsToClean[0].id
+    : `${targetsToClean.length} monitors`;
+  await interaction.editReply({
+    content: totalGhosted === 0
+      ? `No dangling incidents found for ${label}.`
+      : `Ghosted ${totalGhosted} dangling incident${totalGhosted === 1 ? "" : "s"} for ${label}.`,
+  });
+}
+
 async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfig, state: BotState) {
   const [incidents, channel] = await Promise.all([
     fetchIncidents(monitor),
@@ -1726,6 +1796,11 @@ async function main() {
 
       if (interaction.commandName === "clean") {
         await handleCleanCommand(interaction);
+        return;
+      }
+
+      if (interaction.commandName === "cleanup") {
+        await handleCleanupCommand(interaction);
         return;
       }
 

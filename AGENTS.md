@@ -110,7 +110,7 @@ See `.env.example` for the full list. Key ones:
 - `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID` (required)
 - `STATUSPAGE_MONITORS_JSON` or `DISCORD_CHANNEL_ID` + `STATUSPAGE_BASE_URL`
 - `POLL_INTERVAL_MS` (default 60000)
-- `ENABLE_*_COMMAND` feature flags (all default true)
+- `ENABLE_*_COMMAND` feature flags (all default true, includes `ENABLE_CLEANUP_COMMAND`)
 
 ## Git Workflow
 
