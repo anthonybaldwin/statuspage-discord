@@ -60,6 +60,7 @@ All default to `true`. Set to `false` to disable the corresponding command.
 | `ENABLE_REPLAY_COMMAND` | `/replay` |
 | `ENABLE_CLEAN_COMMAND` | `/clean` |
 | `ENABLE_MONITOR_COMMAND` | `/monitor` |
+| `ENABLE_CLEANUP_COMMAND` | `/cleanup` |
 
 Boolean values accept: `true`, `1`, `yes`, `on` (truthy) or `false`, `0`, `no`, `off` (falsy).
 
@@ -77,7 +78,7 @@ The bot requires these permissions in each monitor channel:
 
 The `/monitor add` command validates these permissions before adding a new monitor.
 
-Administrative commands (`/testpost`, `/replay`, `/clean`, `/monitor`) require the **Manage Server** permission.
+Administrative commands (`/testpost`, `/replay`, `/clean`, `/cleanup`, `/monitor`) require the **Manage Server** permission.
 
 ## Gateway Intents
 

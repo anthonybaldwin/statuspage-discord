@@ -32,6 +32,20 @@ Replay active incident timelines into their threads.
   5. Skips incidents that already have complete live threads
 - **Use case:** Recover after state loss, manual cleanup, or to backfill a newly added monitor
 
+## `/cleanup [target]`
+
+Find and ghost dangling incident threads that are no longer in the Statuspage API.
+
+- **Permission:** Manage Server
+- **Response:** Ephemeral summary of ghosted incidents
+- **Target resolution:** If `target` is omitted, cleans all monitors. Otherwise cleans only the specified monitor.
+- **Behavior:**
+  1. Fetches current incidents from the Statuspage API for each target monitor
+  2. Identifies tracked incidents that are unresolved in state but absent from the API
+  3. Ghosts them (grey embed + strikethrough text + unpin + archive thread)
+  4. Syncs `openIncidentIds` from the API
+- **Use case:** Remove dangling threads that persisted after incidents aged out of the API between polls
+
 ## `/clean [limit]`
 
 Delete recent bot-authored messages in the current channel.
@@ -88,5 +102,5 @@ List all configured monitors with metadata.
 
 ## Autocomplete
 
-- `/status`, `/testpost`, `/replay`: Autocompletes `target` from all configured monitors (ID and label)
+- `/status`, `/testpost`, `/replay`, `/cleanup`: Autocompletes `target` from all configured monitors (ID and label)
 - `/monitor remove`: Autocompletes `id` from runtime monitors only (env monitors are protected)
