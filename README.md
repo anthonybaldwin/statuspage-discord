@@ -10,92 +10,41 @@ A Bun-based Discord bot that:
   |---|---|---|---|
   | <a href="https://github.com/user-attachments/assets/39b6ee5d-851b-42ea-b828-5c2aed2d54a7" target="_blank"><img width="160" alt="image" src="https://github.com/user-attachments/assets/39b6ee5d-851b-42ea-b828-5c2aed2d54a7" /></a> | <a href="https://github.com/user-attachments/assets/65c101c1-20ba-4c0a-83e0-c79266e274d4" target="_blank"><img width="120" alt="image" src="https://github.com/user-attachments/assets/65c101c1-20ba-4c0a-83e0-c79266e274d4" /></a> | <a href="https://github.com/user-attachments/assets/c6e762a4-2770-4149-adaa-7d01484cc316" target="_blank"><img width="140" alt="image" src="https://github.com/user-attachments/assets/c6e762a4-2770-4149-adaa-7d01484cc316" /></a> | <a href="https://github.com/user-attachments/assets/f9e32a7c-b167-4bd9-91aa-b99064f8a899" target="_blank"><img width="200" alt="image" src="https://github.com/user-attachments/assets/f9e32a7c-b167-4bd9-91aa-b99064f8a899" /></a> |
 
-## Environment
-
-Copy `.env.example` to `.env` and fill in:
-
-- `DISCORD_TOKEN`: bot token
-- `DISCORD_APPLICATION_ID`: Discord application ID
-- `DISCORD_GUILD_ID`: optional; if set, commands register to one guild for fast iteration
-- `DISCORD_CHANNEL_ID`: legacy single-monitor text channel where updates should be posted
-- `STATUSPAGE_BASE_URL`: legacy single-monitor public Statuspage URL, for example `https://status.atlassian.com`
-- `STATUSPAGE_MONITORS_JSON`: optional JSON array for multiple monitor targets; each object needs `id`, `channelId`, `baseUrl`, and optional `label`
-- `POLL_INTERVAL_MS`: optional, defaults to `60000`
-- `POST_EXISTING_UPDATES_ON_START`: optional, defaults to `false`; when `true`, the bot will backfill currently visible incident updates on first run
-- `ENABLE_STATUS_COMMAND`: optional, defaults to `true`
-- `ENABLE_TEST_COMMAND`: optional, defaults to `true`
-- `ENABLE_REPLAY_COMMAND`: optional, defaults to `true`
-- `ENABLE_CLEAN_COMMAND`: optional, defaults to `true`
-- `ENABLE_MONITOR_COMMAND`: optional, defaults to `true`; enables the `/monitor` command for adding/removing monitors at runtime
-
-Example multi-monitor config:
-
-```env
-STATUSPAGE_MONITORS_JSON=[{"id":"atlassian","channelId":"123456789012345678","baseUrl":"https://status.atlassian.com","label":"Atlassian"},{"id":"claude","channelId":"234567890123456789","baseUrl":"https://status.claude.com","label":"Claude"}]
-```
-
-## Commands
-
-- `/status [target]`: show the current page status and active incidents
-- `/testpost [target]`: post the current status snapshot into the configured channel without marking any update as sent
-- `/replay [target]`: replay each active incident timeline into the relevant thread when enabled
-- `/clean [limit]`: delete recent bot-authored messages in the current channel when enabled
-- `/monitor add <url> [channel] [label] [id]`: add a new Statuspage monitor at runtime (requires **Manage Server**)
-- `/monitor remove <id>`: remove a runtime monitor — env-configured monitors are protected (requires **Manage Server**)
-- `/monitor list`: list all monitors with their source (`env` or `runtime`), URL, and channel (requires **Manage Server**)
-
-## Run
+## Quick Start
 
 ```bash
+cp .env.example .env      # Fill in DISCORD_TOKEN, DISCORD_APPLICATION_ID, etc.
 bun install
-bun dev
+bun dev                    # Watch mode (or `bun start` for production)
 ```
 
-Or run without watch mode:
+## Docker
 
 ```bash
-bun start
+docker compose up -d       # Production deployment with Docker Compose
 ```
 
-## Docker Compose
+A prebuilt image is available at `ghcr.io/anthonybaldwin/statuspage-discord:main`.
 
-The simplest way to run in production. Secrets stay in your host-side `.env` and are injected at runtime via `env_file` — they are never copied into the image.
+## Documentation
 
-```bash
-docker compose up -d
-```
+Full docs live in the [wiki](https://github.com/anthonybaldwin/statuspage-discord/wiki):
 
-State persists in the `statuspage_data` named volume across restarts and container recreations (e.g. image updates via WUD or Watchtower).
-
-## Docker (manual)
-
-Build the image:
-
-```bash
-docker build -t statuspage-discord .
-```
-
-Run it with your local `.env` passed at runtime:
-
-```bash
-docker run --rm --env-file .env -v statuspage_data:/app/data statuspage-discord
-```
-
-A prebuilt image is also available from the GitHub Container Registry:
-
-```bash
-docker pull ghcr.io/anthonybaldwin/statuspage-discord:main
-```
+| Page | Description |
+|------|-------------|
+| [Architecture](https://github.com/anthonybaldwin/statuspage-discord/wiki/Architecture) | System design, data flow, and module structure |
+| [Configuration](https://github.com/anthonybaldwin/statuspage-discord/wiki/Configuration) | Environment variables, multi-monitor setup, feature flags |
+| [Commands](https://github.com/anthonybaldwin/statuspage-discord/wiki/Commands) | All slash commands with usage and permissions |
+| [Incident Lifecycle](https://github.com/anthonybaldwin/statuspage-discord/wiki/Incident-Lifecycle) | How incidents are tracked from creation to resolution or removal |
+| [State Management](https://github.com/anthonybaldwin/statuspage-discord/wiki/State-Management) | Persistence format, migration, and locking |
+| [API Integration](https://github.com/anthonybaldwin/statuspage-discord/wiki/API-Integration) | Statuspage API endpoints and response handling |
+| [Deployment](https://github.com/anthonybaldwin/statuspage-discord/wiki/Deployment) | Docker, Docker Compose, CI/CD, and production notes |
+| [Development](https://github.com/anthonybaldwin/statuspage-discord/wiki/Development) | Local setup, tooling, and contribution guide |
+| [Contributing](https://github.com/anthonybaldwin/statuspage-discord/wiki/Contributing) | How to contribute, code conventions, and documentation rules |
 
 ## Notes
 
-- Posted incident update IDs are persisted in `data/state.json`.
-- Runtime monitors added via `/monitor add` are persisted in `data/monitors.json` and survive restarts.
-- Incident parent message IDs and thread IDs are persisted in `data/state.json`.
 - The bot uses the public Statuspage API under `<base-url>/api/v2/...`, so a public page URL is enough.
 - For development, setting `DISCORD_GUILD_ID` makes slash-command registration update faster than global commands.
 - On first startup, the bot seeds current incident-update IDs without posting them unless `POST_EXISTING_UPDATES_ON_START=true`.
-- New incidents create one parent message in the configured channel and a thread for follow-up updates. The parent message is pinned while the incident is active and unpinned when resolved.
-- When multiple monitors are configured, command `target` values map to the monitor `id` fields.
-- The bot needs permission to create and send messages in threads if you want incident threads to work. It also needs the Manage Messages permission to pin/unpin incident messages.
-- For Docker, keep secrets in a host-side `.env` and pass them with `--env-file` instead of copying them into the image.
+- The bot needs Send Messages, Embed Links, Create Public Threads, and Manage Messages permissions.
