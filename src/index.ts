@@ -693,7 +693,9 @@ function renderDeletedUpdateEmbed(originalEmbed: EmbedBuilder) {
 }
 
 function summaryFields(summary: Summary): APIEmbedField[] {
-  if (summary.incidents.length === 0) {
+  const active = summary.incidents.filter((incident) => !incident.resolved_at);
+
+  if (active.length === 0) {
     return [
       {
         name: "Active Incidents",
@@ -702,7 +704,7 @@ function summaryFields(summary: Summary): APIEmbedField[] {
     ];
   }
 
-  return summary.incidents.slice(0, 10).map((incident) => {
+  return active.slice(0, 10).map((incident) => {
     const latest = [...incident.incident_updates].sort(byNewestUpdate)[0];
     const parts = [
       `Status: ${titleCase(incident.status)}`,
@@ -1504,9 +1506,13 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
     }
 
     await fetchedThread.delete("Clean command requested").catch(() => null);
-    monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
-      (updateId) => !mapping.postedUpdateIds.includes(updateId),
-    );
+    // Only strip update IDs for unresolved incidents so they re-post and
+    // get new threads. Resolved ones stay "seen" to prevent flooding.
+    if (!mapping.resolvedAt) {
+      monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
+        (updateId) => !mapping.postedUpdateIds.includes(updateId),
+      );
+    }
     delete monitorState.incidents[incidentId];
   }
 
@@ -1524,10 +1530,14 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
   const deleted = await channel.bulkDelete(deletableMessages, true);
   for (const [incidentId, mapping] of Object.entries(monitorState.incidents)) {
     if (deleted.has(mapping.parentMessageId)) {
+      // Only strip update IDs for unresolved incidents so they re-post and
+      // get new threads. Resolved ones stay "seen" to prevent flooding.
+      if (!mapping.resolvedAt) {
+        monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
+          (updateId) => !mapping.postedUpdateIds.includes(updateId),
+        );
+      }
       delete monitorState.incidents[incidentId];
-      monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
-        (updateId) => !mapping.postedUpdateIds.includes(updateId),
-      );
     }
   }
   await writeState(state);

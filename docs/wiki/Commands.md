@@ -57,7 +57,7 @@ Delete recent bot-authored messages in the current channel.
 - **Behavior:**
   1. Deletes all incident threads and their bot-authored messages
   2. Bulk-deletes bot-authored channel messages (respects Discord's 14-day limit)
-  3. Cleans up corresponding state entries
+  3. Removes per-incident state entries; preserves monitor-level `postedUpdateIds` for resolved incidents (preventing re-post flooding) but strips them for active incidents (so they re-create threads on the next poll)
 - **Use case:** Reset a channel after testing or reconfiguration
 
 ## `/monitor add <url> [channel] [label] [id]`
