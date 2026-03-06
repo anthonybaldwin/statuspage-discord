@@ -693,7 +693,9 @@ function renderDeletedUpdateEmbed(originalEmbed: EmbedBuilder) {
 }
 
 function summaryFields(summary: Summary): APIEmbedField[] {
-  if (summary.incidents.length === 0) {
+  const active = summary.incidents.filter((incident) => !incident.resolved_at);
+
+  if (active.length === 0) {
     return [
       {
         name: "Active Incidents",
@@ -702,7 +704,7 @@ function summaryFields(summary: Summary): APIEmbedField[] {
     ];
   }
 
-  return summary.incidents.slice(0, 10).map((incident) => {
+  return active.slice(0, 10).map((incident) => {
     const latest = [...incident.incident_updates].sort(byNewestUpdate)[0];
     const parts = [
       `Status: ${titleCase(incident.status)}`,
