@@ -86,6 +86,7 @@ Runtime monitor mutations (`/monitor add`, `/monitor remove`) use a promise-chai
 - `postedUpdateIds` (monitor-level) is trimmed to the last 500 entries per poll cycle
 - `postedUpdateIds` (incident-level) is trimmed to the last 500 entries per replay
 - Incident state entries are only deleted when Discord resources are confirmed missing
+- `/clean` preserves monitor-level `postedUpdateIds` for resolved incidents to prevent re-posting, but strips them for active incidents so they re-create threads
 
 ## File Safety
 
