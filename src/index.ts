@@ -1504,9 +1504,13 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
     }
 
     await fetchedThread.delete("Clean command requested").catch(() => null);
-    monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
-      (updateId) => !mapping.postedUpdateIds.includes(updateId),
-    );
+    // Only strip update IDs for unresolved incidents so they re-post and
+    // get new threads. Resolved ones stay "seen" to prevent flooding.
+    if (!mapping.resolvedAt) {
+      monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
+        (updateId) => !mapping.postedUpdateIds.includes(updateId),
+      );
+    }
     delete monitorState.incidents[incidentId];
   }
 
@@ -1524,10 +1528,14 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
   const deleted = await channel.bulkDelete(deletableMessages, true);
   for (const [incidentId, mapping] of Object.entries(monitorState.incidents)) {
     if (deleted.has(mapping.parentMessageId)) {
+      // Only strip update IDs for unresolved incidents so they re-post and
+      // get new threads. Resolved ones stay "seen" to prevent flooding.
+      if (!mapping.resolvedAt) {
+        monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
+          (updateId) => !mapping.postedUpdateIds.includes(updateId),
+        );
+      }
       delete monitorState.incidents[incidentId];
-      monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
-        (updateId) => !mapping.postedUpdateIds.includes(updateId),
-      );
     }
   }
   await writeState(state);
