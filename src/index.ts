@@ -297,6 +297,13 @@ function buildCommands() {
         .setName("clean")
         .setDescription("Delete recent bot-authored messages in the current channel.")
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+        .addStringOption((option) =>
+          option
+            .setName("target")
+            .setDescription("Optional monitor id. Omit to clean all monitors in this channel.")
+            .setRequired(false)
+            .setAutocomplete(true),
+        )
         .addIntegerOption((option) =>
           option
             .setName("limit")
@@ -991,7 +998,7 @@ async function getTargetChannel(client: Client, monitor: MonitorConfig) {
   return channel as TextChannel;
 }
 
-function resolveMonitor(interaction: ChatInputCommandInteraction) {
+function resolveMonitors(interaction: ChatInputCommandInteraction): MonitorConfig[] {
   const requested = interaction.options.getString("target") ?? undefined;
 
   if (requested) {
@@ -999,16 +1006,16 @@ function resolveMonitor(interaction: ChatInputCommandInteraction) {
     if (!match) {
       throw new Error(`Unknown target "${requested}". Configured targets: ${monitors.map((monitor) => monitor.id).join(", ")}`);
     }
-    return match;
+    return [match];
   }
 
   if (monitors.length === 1) {
-    return monitors[0];
+    return [monitors[0]];
   }
 
-  const channelMatch = monitors.find((monitor) => monitor.channelId === interaction.channelId);
-  if (channelMatch) {
-    return channelMatch;
+  const channelMatches = monitors.filter((monitor) => monitor.channelId === interaction.channelId);
+  if (channelMatches.length > 0) {
+    return channelMatches;
   }
 
   throw new Error(`Multiple monitors are configured. Pass a target: ${monitors.map((monitor) => monitor.id).join(", ")}`);
@@ -1353,13 +1360,16 @@ async function handleStatusCommand(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const monitor = resolveMonitor(interaction);
+  const targets = resolveMonitors(interaction);
   const state = await readState();
-  await assertMonitorChannelAccess(interaction, monitor, state);
-  const summary = await fetchSummary(monitor);
-  await interaction.editReply({
-    embeds: [renderStatusEmbed(monitor, summary)],
-  });
+  await assertMonitorChannelAccess(interaction, targets[0], state);
+  const embeds = await Promise.all(
+    targets.map(async (monitor) => {
+      const summary = await fetchSummary(monitor);
+      return renderStatusEmbed(monitor, summary);
+    }),
+  );
+  await interaction.editReply({ embeds });
 }
 
 async function handleReplayCommand(interaction: ChatInputCommandInteraction) {
@@ -1368,49 +1378,53 @@ async function handleReplayCommand(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const monitor = resolveMonitor(interaction);
+  const targets = resolveMonitors(interaction);
   const state = await readState();
-  await assertMonitorChannelAccess(interaction, monitor, state);
-  const [replayTargets, channel] = await Promise.all([
-    getReplayTargets(monitor),
-    getTargetChannel(interaction.client, monitor),
-  ]);
+  await assertMonitorChannelAccess(interaction, targets[0], state);
 
-  const monitorState = getMonitorState(state, monitor.id);
-  const replayedTargets: Array<{ incident: Incident; updates: IncidentUpdate[] }> = [];
-  const skippedIncidents: Incident[] = [];
   const botUserId = interaction.client.user?.id;
-
   if (!botUserId) {
     throw new Error("Bot user is not available.");
   }
 
-  for (const { incident, updates } of replayTargets) {
-    const existing = monitorState.incidents[incident.id];
-    const thread = existing ? await channel.client.channels.fetch(existing.threadId).catch(() => null) : null;
-    let missingUpdates = updates;
+  const replayedTargets: Array<{ incident: Incident; updates: IncidentUpdate[] }> = [];
+  const skippedIncidents: Incident[] = [];
 
-    if (existing && thread?.isThread()) {
-      const missingFromTrackedState = await getMissingIncidentUpdates(thread, existing, updates);
-      const presentThreadUpdateIds = await getPresentThreadUpdateIds(thread, botUserId);
-      const missingFromThreadScan = updates.filter((update) => !presentThreadUpdateIds.has(update.id));
-      const missingIds = new Set([
-        ...missingFromTrackedState.map((update) => update.id),
-        ...missingFromThreadScan.map((update) => update.id),
-      ]);
-      missingUpdates = updates.filter((update) => missingIds.has(update.id));
+  for (const monitor of targets) {
+    const [replayTargets, channel] = await Promise.all([
+      getReplayTargets(monitor),
+      getTargetChannel(interaction.client, monitor),
+    ]);
+
+    const monitorState = getMonitorState(state, monitor.id);
+
+    for (const { incident, updates } of replayTargets) {
+      const existing = monitorState.incidents[incident.id];
+      const thread = existing ? await channel.client.channels.fetch(existing.threadId).catch(() => null) : null;
+      let missingUpdates = updates;
+
+      if (existing && thread?.isThread()) {
+        const missingFromTrackedState = await getMissingIncidentUpdates(thread, existing, updates);
+        const presentThreadUpdateIds = await getPresentThreadUpdateIds(thread, botUserId);
+        const missingFromThreadScan = updates.filter((update) => !presentThreadUpdateIds.has(update.id));
+        const missingIds = new Set([
+          ...missingFromTrackedState.map((update) => update.id),
+          ...missingFromThreadScan.map((update) => update.id),
+        ]);
+        missingUpdates = updates.filter((update) => missingIds.has(update.id));
+      }
+
+      if (
+        missingUpdates.length === 0 &&
+        (await hasLiveIncidentMessages(channel, monitorState, incident))
+      ) {
+        skippedIncidents.push(incident);
+        continue;
+      }
+
+      await replayIncidentTimeline(channel, monitorState, monitor, incident, missingUpdates);
+      replayedTargets.push({ incident, updates: missingUpdates });
     }
-
-    if (
-      missingUpdates.length === 0 &&
-      (await hasLiveIncidentMessages(channel, monitorState, incident))
-    ) {
-      skippedIncidents.push(incident);
-      continue;
-    }
-
-    await replayIncidentTimeline(channel, monitorState, monitor, incident, missingUpdates);
-    replayedTargets.push({ incident, updates: missingUpdates });
   }
 
   await writeState(state);
@@ -1435,19 +1449,26 @@ async function handleTestPostCommand(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const monitor = resolveMonitor(interaction);
+  const targets = resolveMonitors(interaction);
   const state = await readState();
-  await assertMonitorChannelAccess(interaction, monitor, state);
-  const [summary, channel] = await Promise.all([
-    fetchSummary(monitor),
-    getTargetChannel(interaction.client, monitor),
-  ]);
+  await assertMonitorChannelAccess(interaction, targets[0], state);
 
-  await channel.send({
-    embeds: [renderStatusEmbed(monitor, summary, "Test")],
-  });
+  const channelIds = new Set<string>();
+  for (const monitor of targets) {
+    const [summary, channel] = await Promise.all([
+      fetchSummary(monitor),
+      getTargetChannel(interaction.client, monitor),
+    ]);
+
+    await channel.send({
+      embeds: [renderStatusEmbed(monitor, summary, "Test")],
+    });
+    channelIds.add(monitor.channelId);
+  }
+
+  const channelMentions = [...channelIds].map((id) => `<#${id}>`).join(", ");
   await interaction.editReply({
-    content: `Posted a status preview into <#${monitor.channelId}>.`,
+    content: `Posted ${targets.length} status preview${targets.length === 1 ? "" : "s"} into ${channelMentions}.`,
   });
 }
 
@@ -1464,12 +1485,22 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
     throw new Error("/clean can only be used in a guild text channel.");
   }
 
-  const channelMonitor = monitors.find((monitor) => monitor.channelId === channel.id);
-  if (!channelMonitor) {
-    throw new Error("/clean can only be used in a configured monitor channel.");
+  const requested = interaction.options.getString("target") ?? undefined;
+  let channelMonitors: MonitorConfig[];
+  if (requested) {
+    const match = monitors.find((m) => m.id === requested);
+    if (!match) {
+      throw new Error(`Unknown target "${requested}". Configured targets: ${monitors.map((m) => m.id).join(", ")}`);
+    }
+    channelMonitors = [match];
+  } else {
+    channelMonitors = monitors.filter((monitor) => monitor.channelId === channel.id);
+    if (channelMonitors.length === 0) {
+      throw new Error("/clean can only be used in a configured monitor channel.");
+    }
   }
 
-  await assertMonitorChannelAccess(interaction, channelMonitor, state);
+  await assertMonitorChannelAccess(interaction, channelMonitors[0], state);
 
   const limit = interaction.options.getInteger("limit") ?? 100;
   const messages = await channel.messages.fetch({ limit });
@@ -1479,9 +1510,22 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
     throw new Error("Bot user is not available.");
   }
 
-  const monitorState = getMonitorState(state, channelMonitor.id);
+  // When targeting a specific monitor, only delete its tracked parent messages.
+  // When cleaning all monitors in a channel, delete all bot messages.
+  const trackedParentIds = requested
+    ? new Set(
+        channelMonitors.flatMap((m) =>
+          Object.values(getMonitorState(state, m.id).incidents).map((inc) => inc.parentMessageId),
+        ),
+      )
+    : undefined;
+
   const deletableMessages = messages.filter((message) => {
     if (message.author.id !== botUserId) {
+      return false;
+    }
+
+    if (trackedParentIds && !trackedParentIds.has(message.id)) {
       return false;
     }
 
@@ -1490,30 +1534,33 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
   });
 
   let deletedThreadMessageCount = 0;
-  for (const [incidentId, mapping] of Object.entries(monitorState.incidents)) {
-    const fetchedThread = await interaction.client.channels.fetch(mapping.threadId).catch(() => null);
-    if (!fetchedThread?.isThread()) {
+  for (const channelMonitor of channelMonitors) {
+    const monitorState = getMonitorState(state, channelMonitor.id);
+    for (const [incidentId, mapping] of Object.entries(monitorState.incidents)) {
+      const fetchedThread = await interaction.client.channels.fetch(mapping.threadId).catch(() => null);
+      if (!fetchedThread?.isThread()) {
+        delete monitorState.incidents[incidentId];
+        continue;
+      }
+
+      const threadMessages = await fetchedThread.messages.fetch({ limit: 100 });
+      const threadBotMessages = threadMessages.filter((message) => message.author.id === botUserId);
+
+      if (threadBotMessages.size > 0) {
+        const deleted = await fetchedThread.bulkDelete(threadBotMessages, true).catch(() => null);
+        deletedThreadMessageCount += deleted?.size ?? 0;
+      }
+
+      await fetchedThread.delete("Clean command requested").catch(() => null);
+      // Only strip update IDs for unresolved incidents so they re-post and
+      // get new threads. Resolved ones stay "seen" to prevent flooding.
+      if (!mapping.resolvedAt) {
+        monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
+          (updateId) => !mapping.postedUpdateIds.includes(updateId),
+        );
+      }
       delete monitorState.incidents[incidentId];
-      continue;
     }
-
-    const threadMessages = await fetchedThread.messages.fetch({ limit: 100 });
-    const threadBotMessages = threadMessages.filter((message) => message.author.id === botUserId);
-
-    if (threadBotMessages.size > 0) {
-      const deleted = await fetchedThread.bulkDelete(threadBotMessages, true).catch(() => null);
-      deletedThreadMessageCount += deleted?.size ?? 0;
-    }
-
-    await fetchedThread.delete("Clean command requested").catch(() => null);
-    // Only strip update IDs for unresolved incidents so they re-post and
-    // get new threads. Resolved ones stay "seen" to prevent flooding.
-    if (!mapping.resolvedAt) {
-      monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
-        (updateId) => !mapping.postedUpdateIds.includes(updateId),
-      );
-    }
-    delete monitorState.incidents[incidentId];
   }
 
   if (deletableMessages.size === 0) {
@@ -1528,16 +1575,19 @@ async function handleCleanCommand(interaction: ChatInputCommandInteraction) {
   }
 
   const deleted = await channel.bulkDelete(deletableMessages, true);
-  for (const [incidentId, mapping] of Object.entries(monitorState.incidents)) {
-    if (deleted.has(mapping.parentMessageId)) {
-      // Only strip update IDs for unresolved incidents so they re-post and
-      // get new threads. Resolved ones stay "seen" to prevent flooding.
-      if (!mapping.resolvedAt) {
-        monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
-          (updateId) => !mapping.postedUpdateIds.includes(updateId),
-        );
+  for (const channelMonitor of channelMonitors) {
+    const monitorState = getMonitorState(state, channelMonitor.id);
+    for (const [incidentId, mapping] of Object.entries(monitorState.incidents)) {
+      if (deleted.has(mapping.parentMessageId)) {
+        // Only strip update IDs for unresolved incidents so they re-post and
+        // get new threads. Resolved ones stay "seen" to prevent flooding.
+        if (!mapping.resolvedAt) {
+          monitorState.postedUpdateIds = monitorState.postedUpdateIds.filter(
+            (updateId) => !mapping.postedUpdateIds.includes(updateId),
+          );
+        }
+        delete monitorState.incidents[incidentId];
       }
-      delete monitorState.incidents[incidentId];
     }
   }
   await writeState(state);
@@ -1608,9 +1658,10 @@ async function handleMonitorAdd(interaction: ChatInputCommandInteraction, client
     throw new Error(`A monitor with ID \`${monitorId}\` already exists${source}.`);
   }
 
-  // Duplicate URL+channel check.
-  if (monitors.some((m) => m.baseUrl.replace(/\/+$/, "") === baseUrl && m.channelId === channelId)) {
-    throw new Error(`A monitor for \`${baseUrl}\` in <#${channelId}> already exists.`);
+  // Duplicate URL check — same Statuspage should only be tracked once per server.
+  const existingUrl = monitors.find((m) => m.baseUrl.replace(/\/+$/, "") === baseUrl);
+  if (existingUrl) {
+    throw new Error(`A monitor for \`${baseUrl}\` already exists (\`${existingUrl.id}\` in <#${existingUrl.channelId}>).`);
   }
 
   const entry: RuntimeMonitorEntry = {

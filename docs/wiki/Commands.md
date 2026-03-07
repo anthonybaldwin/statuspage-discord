@@ -8,7 +8,7 @@ Show the current page status and active incidents.
 
 - **Permission:** None (channel access check applies)
 - **Response:** Ephemeral embed with overall status indicator, color-coded by severity, and a list of active incidents
-- **Target resolution:** If `target` is omitted, resolves to the monitor matching the current channel, or the only configured monitor. Errors if ambiguous.
+- **Target resolution:** If `target` is omitted, resolves to all monitors matching the current channel, or the only configured monitor. Errors if ambiguous. When multiple monitors match, returns one embed per monitor.
 
 ## `/testpost [target]`
 
@@ -46,12 +46,13 @@ Find and ghost dangling incident threads that are no longer in the Statuspage AP
   4. Syncs `openIncidentIds` from the API
 - **Use case:** Remove dangling threads that persisted after incidents aged out of the API between polls
 
-## `/clean [limit]`
+## `/clean [target] [limit]`
 
 Delete recent bot-authored messages in the current channel.
 
 - **Permission:** Manage Server
-- **Channel:** Must be used in a configured monitor channel
+- **Channel:** Must be used in a configured monitor channel.
+- **Target resolution:** If `target` is omitted, cleans all monitors in the channel. When a target is specified, only that monitor's threads and parent messages are removed.
 - **Options:**
   - `limit` (integer, 1-100, default 100): How many recent messages to inspect
 - **Behavior:**
@@ -73,7 +74,7 @@ Add a new Statuspage monitor at runtime.
 - **Validation:**
   - Tests `<url>/api/v2/summary.json` to confirm a valid Statuspage
   - Checks bot permissions in the target channel
-  - Rejects duplicate IDs or duplicate URL+channel combinations
+  - Rejects duplicate IDs or duplicate URLs (same Statuspage can only be tracked once per server; different statuspages in the same channel are allowed)
 - **Side effects:**
   - Persists to `data/monitors.json`
   - Re-registers commands for updated autocomplete
@@ -102,5 +103,5 @@ List all configured monitors with metadata.
 
 ## Autocomplete
 
-- `/status`, `/testpost`, `/replay`, `/cleanup`: Autocompletes `target` from all configured monitors (ID and label)
+- `/status`, `/testpost`, `/replay`, `/cleanup`, `/clean`: Autocompletes `target` from all configured monitors (ID and label)
 - `/monitor remove`: Autocompletes `id` from runtime monitors only (env monitors are protected)
