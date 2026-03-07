@@ -37,7 +37,7 @@ stateDiagram-v2
 - **Discord actions:**
   - Thread unarchived if it was archived
   - Update embed posted in the thread
-  - Parent embed re-rendered with latest status/timestamp
+  - Parent embed re-rendered with latest update body, status, and timestamp
 - **State:** Update IDs appended to both `incidentState.postedUpdateIds` and `monitorState.postedUpdateIds`
 
 ### Resolved

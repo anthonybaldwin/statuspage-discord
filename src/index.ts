@@ -608,9 +608,13 @@ function renderUpdateEmbed(
 
 function renderParentEmbed(monitor: MonitorConfig, incident: Incident) {
   const latest = [...incident.incident_updates].sort(byNewestUpdate)[0];
-  const description = incident.resolved_at
-    ? "This incident has been resolved. Open the thread for the full timeline."
-    : "Open the thread for the full timeline and follow-up updates.";
+  const threadNote = incident.resolved_at
+    ? "-# This incident has been resolved. Open the thread for the full timeline."
+    : "-# Open the thread for the full timeline and follow-up updates.";
+  const latestBody = latest ? truncate(latest.body, 3900) : "";
+  const description = latestBody
+    ? `${latestBody}\n\n${threadNote}`
+    : threadNote;
   const embed = new EmbedBuilder()
     .setColor(impactColor(incident.impact, incident.status))
     .setAuthor({
