@@ -20,8 +20,14 @@ jobs:
         run: |
           git clone "https://x-access-token:${{ secrets.WIKI_SYNC_PAT }}@github.com/anthonybaldwin/statuspage-discord.wiki.git" wiki
 
-      - name: Copy docs into wiki
-        run: cp docs/wiki/*.md wiki/
+      - name: Sync docs into wiki
+        run: |
+          cd wiki
+          git ls-files '*.md' | while IFS= read -r f; do
+            [ -f "../docs/wiki/$f" ] || git rm "$f"
+          done
+          cd ..
+          cp docs/wiki/*.md wiki/
 
       - name: Commit and push
         run: |
