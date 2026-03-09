@@ -36,8 +36,8 @@ stateDiagram-v2
 - **Trigger:** New entries appear in `incident.incident_updates` that weren't previously posted
 - **Discord actions:**
   - Thread unarchived if it was archived
-  - Update embed posted in the thread
-  - Parent embed re-rendered with latest status/timestamp
+  - Update embed posted in the thread (color-coded by the update's own status, not the incident's current status)
+  - Parent embed re-rendered with latest update body, status, and timestamp
 - **State:** Update IDs appended to both `incidentState.postedUpdateIds` and `monitorState.postedUpdateIds`
 
 ### Resolved

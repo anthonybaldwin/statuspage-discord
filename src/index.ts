@@ -473,6 +473,7 @@ function formatTimestamp(value?: string | null) {
 function statusColor(status: string) {
   switch (status.toLowerCase()) {
     case "resolved":
+    case "postmortem":
     case "operational":
     case "none":
       return 0x2fb344;
@@ -500,7 +501,7 @@ function statusColor(status: string) {
 }
 
 function impactColor(impact: string, status?: string) {
-  if (status?.toLowerCase() === "resolved") {
+  if (status?.toLowerCase() === "resolved" || status?.toLowerCase() === "postmortem") {
     return 0x2fb344;
   }
 
@@ -582,7 +583,7 @@ function renderUpdateEmbed(
   prefix?: string,
 ) {
   const embed = new EmbedBuilder()
-    .setColor(impactColor(incident.impact, incident.status))
+    .setColor(impactColor(incident.impact, update.status))
     .setAuthor({
       name: `${monitorDisplayName(monitor)} Incident Update`,
       iconURL: monitorIcons.get(monitor.id),
@@ -608,9 +609,13 @@ function renderUpdateEmbed(
 
 function renderParentEmbed(monitor: MonitorConfig, incident: Incident) {
   const latest = [...incident.incident_updates].sort(byNewestUpdate)[0];
-  const description = incident.resolved_at
-    ? "This incident has been resolved. Open the thread for the full timeline."
-    : "Open the thread for the full timeline and follow-up updates.";
+  const threadNote = incident.resolved_at
+    ? "-# This incident has been resolved. Open the thread for the full timeline."
+    : "-# Open the thread for the full timeline and follow-up updates.";
+  const latestBody = latest ? truncate(latest.body, 3900) : "";
+  const description = latestBody
+    ? `${latestBody}\n\n${threadNote}`
+    : threadNote;
   const embed = new EmbedBuilder()
     .setColor(impactColor(incident.impact, incident.status))
     .setAuthor({
