@@ -45,6 +45,17 @@ The single source file is organized into these logical sections:
 | Command Handlers | 1260-1610 | /status, /replay, /testpost, /clean, /monitor |
 | Main Entry | 1610-1700 | Client setup, event handlers, login |
 
+## Presence Rotation
+
+The bot displays a rotating Discord presence that cycles every 15 seconds through four statuses:
+
+1. **Watching N status pages** — total monitor count
+2. **Watching N active incidents** — open incidents across all monitors
+3. **Watching Xd Xh** — uptime since bot started
+4. **Playing vX.Y.Z** — version from `APP_VERSION` env var (auto-set in Docker builds) or `package.json`
+
+The rotation reads state from disk each tick to get current incident counts, and reads `monitors.length` directly for the monitor count.
+
 ## Key Design Decisions
 
 ### Single File

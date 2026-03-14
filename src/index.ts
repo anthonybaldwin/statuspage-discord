@@ -1,4 +1,5 @@
 import {
+  ActivityType,
   APIEmbedField,
   AutocompleteInteraction,
   ChannelType,
@@ -63,6 +64,7 @@ const envSchema = z.object({
   ENABLE_TEST_COMMAND: booleanFromEnv.default("true"),
   ENABLE_MONITOR_COMMAND: booleanFromEnv.default("true"),
   ENABLE_CLEANUP_COMMAND: booleanFromEnv.default("true"),
+  APP_VERSION: z.string().min(1).optional(),
 });
 
 type MonitorConfig = z.infer<typeof monitorSchema>;
@@ -104,6 +106,10 @@ let monitors: MonitorConfig[] = [...envMonitors];
 const statePath = resolve("data", "state.json");
 const runtimeMonitorsPath = resolve("data", "monitors.json");
 const monitorIcons = new Map<string, string>();
+const packageVersion = (
+  JSON.parse(await readFile(resolve("package.json"), "utf8")) as { version: string }
+).version;
+const appVersion = env.APP_VERSION ?? packageVersion;
 
 // Simple promise-chain lock for read-modify-write safety on monitors.json.
 let monitorLockChain = Promise.resolve();
@@ -1803,6 +1809,43 @@ async function handleMonitorList(interaction: ChatInputCommandInteraction) {
   await interaction.editReply({ embeds: [embed] });
 }
 
+function startPresenceRotation(client: Client<true>) {
+  const startedAt = Date.now();
+  let rotationIndex = 0;
+
+  function updatePresence() {
+    void readState()
+      .then((state) => {
+        let totalIncidents = 0;
+        for (const monitorId of Object.keys(state.monitors)) {
+          totalIncidents += state.monitors[monitorId].openIncidentIds.length;
+        }
+
+        const uptimeMs = Date.now() - startedAt;
+        const uptimeDays = Math.floor(uptimeMs / 86_400_000);
+        const uptimeHours = Math.floor((uptimeMs % 86_400_000) / 3_600_000);
+        const uptimeMinutes = Math.floor((uptimeMs % 3_600_000) / 60_000);
+        const uptimeStr = uptimeDays > 0 ? `${uptimeDays}d ${uptimeHours}h` : uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes}m` : `${uptimeMinutes}m`;
+
+        const activities: { name: string; type: ActivityType }[] = [
+          { name: `${monitors.length || "No"} Statuspage${monitors.length === 1 ? "" : "s"}`, type: ActivityType.Watching },
+          { name: `${totalIncidents || "No"} active incident${totalIncidents === 1 ? "" : "s"}`, type: ActivityType.Watching },
+          { name: `v${appVersion} (Uptime: ${uptimeStr})`, type: ActivityType.Playing },
+        ];
+
+        const activity = activities[rotationIndex % activities.length];
+        client.user.setActivity(activity.name, { type: activity.type });
+        rotationIndex++;
+      })
+      .catch((error) => {
+        console.error("Presence update failed.", error);
+      });
+  }
+
+  updatePresence();
+  setInterval(updatePresence, 15_000);
+}
+
 async function main() {
   await ensureStateFile();
   const runtimeEntries = await readRuntimeMonitors();
@@ -1816,6 +1859,7 @@ async function main() {
 
   client.once("clientReady", async () => {
     console.log(`Logged in as ${client.user?.tag}`);
+    startPresenceRotation(client as Client<true>);
 
     try {
       await postLatestUpdates(client);

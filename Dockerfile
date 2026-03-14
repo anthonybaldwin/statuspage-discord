@@ -1,5 +1,8 @@
 FROM oven/bun:1.3.10-alpine
 
+ARG APP_VERSION=
+ENV APP_VERSION=${APP_VERSION}
+
 WORKDIR /app
 
 COPY package.json bun.lock ./

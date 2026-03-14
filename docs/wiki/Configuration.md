@@ -48,6 +48,7 @@ Monitors can also be added at runtime via `/monitor add`. These are persisted in
 | `DISCORD_GUILD_ID` | — | Guild ID for faster command registration during development. When set, commands are guild-scoped instead of global. |
 | `POLL_INTERVAL_MS` | `60000` | How often (in ms) to poll each Statuspage |
 | `POST_EXISTING_UPDATES_ON_START` | `false` | When `true`, posts all visible incident updates on first startup instead of silently seeding them |
+| `APP_VERSION` | `package.json` version | Version string displayed in the bot's rotating Discord presence. Auto-set during Docker builds via build arg. |
 
 ## Feature Flags
 
