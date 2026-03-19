@@ -660,9 +660,9 @@ function renderMissingParentEmbed(monitor: MonitorConfig, incidentName: string) 
       iconURL: monitorIcons.get(monitor.id),
     })
     .setTitle(`~~${incidentName}~~`)
-    .setDescription("~~This incident is no longer available on the status page.~~")
+    .setDescription("This incident is no longer available on the status page.")
     .addFields(
-      { name: "Status", value: "~~Removed~~", inline: true },
+      { name: "Status", value: "Removed", inline: true },
     )
     .setFooter({ text: "Removed" })
     .setTimestamp(new Date());
