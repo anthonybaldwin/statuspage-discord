@@ -600,11 +600,8 @@ function renderUpdateEmbed(
       { name: "Status", value: incidentStateLabel(update.status), inline: true },
       { name: "Impact", value: titleCase(incident.impact), inline: true },
       { name: "Updated", value: formatTimestamp(update.created_at), inline: true },
-    )
-    .setFooter({
-      text: update.id,
-    })
-    .setTimestamp(new Date(update.created_at));
+      { name: "ID", value: update.id, inline: true },
+    );
 
   if (incident.shortlink) {
     embed.setURL(incident.shortlink);
@@ -640,10 +637,6 @@ function renderParentEmbed(monitor: MonitorConfig, incident: Incident) {
         inline: true,
       },
     )
-    .setFooter({
-      text: incident.resolved_at ? "Resolved" : "Active",
-    })
-    .setTimestamp(new Date(latest?.created_at ?? incident.created_at));
 
   if (incident.shortlink) {
     embed.setURL(incident.shortlink);
@@ -660,19 +653,16 @@ function renderMissingParentEmbed(monitor: MonitorConfig, incidentName: string) 
       iconURL: monitorIcons.get(monitor.id),
     })
     .setTitle(`~~${incidentName}~~`)
-    .setDescription("~~This incident is no longer available on the status page.~~")
+    .setDescription("This incident is no longer available on the status page.")
     .addFields(
-      { name: "Status", value: "~~Removed~~", inline: true },
+      { name: "Status", value: "Removed", inline: true },
     )
-    .setFooter({ text: "Removed" })
-    .setTimestamp(new Date());
 }
 
 function renderDeletedUpdateEmbed(originalEmbed: EmbedBuilder) {
   const data = originalEmbed.toJSON();
   const embed = new EmbedBuilder()
-    .setColor(MISSING_INCIDENT_COLOR)
-    .setTimestamp(data.timestamp ? new Date(data.timestamp) : new Date());
+    .setColor(MISSING_INCIDENT_COLOR);
 
   if (data.author) {
     embed.setAuthor({
@@ -697,10 +687,6 @@ function renderDeletedUpdateEmbed(originalEmbed: EmbedBuilder) {
         inline: field.inline,
       })),
     );
-  }
-
-  if (data.footer) {
-    embed.setFooter({ text: data.footer.text });
   }
 
   if (data.url) {
@@ -761,7 +747,6 @@ function renderStatusEmbed(monitor: MonitorConfig, summary: Summary, prefix?: st
     .setFooter({
       text: summary.page.url,
     })
-    .setTimestamp(summary.page.updated_at ? new Date(summary.page.updated_at) : new Date());
 }
 
 function byNewestUpdate(a: IncidentUpdate, b: IncidentUpdate) {
@@ -905,12 +890,19 @@ async function getMissingIncidentUpdates(
 }
 
 function extractUpdateIdFromMessage(message: Message) {
-  const footerText = message.embeds[0]?.footer?.text;
-  if (!footerText) {
+  const embed = message.embeds[0];
+  if (!embed) {
     return undefined;
   }
 
-  return footerText.trim() || undefined;
+  const idField = embed.fields.find((f) => f.name === "ID");
+  if (idField) {
+    return idField.value.trim() || undefined;
+  }
+
+  // Fallback: older messages may still have the ID in the footer
+  const footerText = embed.footer?.text;
+  return footerText?.trim() || undefined;
 }
 
 async function getPresentThreadUpdateIds(thread: ThreadChannel, botUserId: string) {
@@ -1722,8 +1714,7 @@ async function handleMonitorAdd(interaction: ChatInputCommandInteraction, client
       { name: "URL", value: baseUrl, inline: true },
       { name: "Channel", value: `<#${channelId}>`, inline: true },
       { name: "Status", value: statusLabel(summary.status.indicator), inline: true },
-    )
-    .setTimestamp();
+    );
 
   await interaction.editReply({ embeds: [embed] });
 }
@@ -1780,8 +1771,7 @@ async function handleMonitorList(interaction: ChatInputCommandInteraction) {
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle("Configured Monitors")
-    .setTimestamp();
+    .setTitle("Configured Monitors");
 
   for (const monitor of monitors) {
     const isEnv = envMonitorIds.has(monitor.id);
