@@ -61,7 +61,7 @@ Delete recent bot-authored messages in the current channel.
   3. Removes per-incident state entries; preserves monitor-level `postedUpdateIds` for resolved incidents (preventing re-post flooding) but strips them for active incidents (so they re-create threads on the next poll)
 - **Use case:** Reset a channel after testing or reconfiguration
 
-## `/monitor add <url> [channel] [label] [id]`
+## `/monitor add <url> [channel] [label] [id] [icon_url]`
 
 Add a new Statuspage monitor at runtime.
 
@@ -71,6 +71,7 @@ Add a new Statuspage monitor at runtime.
   - `channel` (optional): Target text channel; defaults to the current channel
   - `label` (optional): Display name for the monitor
   - `id` (optional): Unique monitor ID; auto-derived from the page name if omitted
+  - `icon_url` (optional): Custom icon URL for embeds; overrides auto-detected favicon
 - **Validation:**
   - Tests `<url>/api/v2/summary.json` to confirm a valid Statuspage
   - Checks bot permissions in the target channel
@@ -79,7 +80,7 @@ Add a new Statuspage monitor at runtime.
   - Persists to `data/monitors.json`
   - Re-registers commands for updated autocomplete
   - Triggers an immediate first poll
-  - Caches the page favicon for embed icons
+  - Caches the page favicon (or `icon_url` override) for embed icons
 
 ## `/monitor remove <id>`
 

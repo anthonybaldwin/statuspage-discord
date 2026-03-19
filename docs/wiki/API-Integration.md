@@ -62,12 +62,15 @@ type IncidentUpdate = {
 
 ## Favicon Fetching
 
-On startup (and when adding a runtime monitor), the bot fetches the Statuspage's HTML to extract the favicon URL:
+On startup (and when adding a runtime monitor), the bot resolves an icon for embed author fields:
 
-1. `GET <baseUrl>` (HTML page)
-2. Regex match: `<link rel="shortcut icon" href="...">`
-3. Protocol-relative URLs (`//`) are normalized to `https://`
-4. Cached in memory (`monitorIcons` Map) for embed author icons
+1. If `iconUrl` is set on the monitor config, use it directly (skips all fetching)
+2. Otherwise, `GET <baseUrl>` (HTML page)
+3. Regex match: `<link rel="shortcut icon" href="...">`
+4. Protocol-relative URLs (`//`) are normalized to `https://`
+5. Cached in memory (`monitorIcons` Map) for embed author icons
+
+Use `iconUrl` to override auto-detection when a page's favicon doesn't work in Discord (e.g. extensionless CloudFront URLs).
 
 ## Error Handling
 

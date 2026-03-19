@@ -47,6 +47,7 @@ const monitorSchema = z.object({
   channelId: z.string().min(1),
   baseUrl: z.string().url(),
   label: z.string().min(1).optional(),
+  iconUrl: z.string().url().optional(),
 });
 
 const envSchema = z.object({
@@ -147,6 +148,8 @@ function rebuildMonitors(runtime: RuntimeMonitorEntry[]) {
 }
 
 async function fetchMonitorIcon(monitor: MonitorConfig): Promise<string | undefined> {
+  // Manual override takes priority — skip fetching entirely.
+  if (monitor.iconUrl) return monitor.iconUrl;
   try {
     const response = await fetch(monitor.baseUrl);
     if (!response.ok) return undefined;
@@ -362,6 +365,9 @@ function buildCommands() {
             )
             .addStringOption((opt) =>
               opt.setName("id").setDescription("Unique ID for the monitor. Auto-derived from page name if omitted.").setRequired(false),
+            )
+            .addStringOption((opt) =>
+              opt.setName("icon_url").setDescription("Custom icon URL for embeds. Overrides auto-detected favicon.").setRequired(false),
             ),
         )
         .addSubcommand((sub) =>
@@ -1648,6 +1654,7 @@ async function handleMonitorAdd(interaction: ChatInputCommandInteraction, client
   }
 
   const label = interaction.options.getString("label") ?? undefined;
+  const iconUrl = interaction.options.getString("icon_url") ?? undefined;
   const providedId = interaction.options.getString("id") ?? undefined;
   const monitorId = providedId ?? deriveMonitorId(summary.page.name);
 
@@ -1672,6 +1679,7 @@ async function handleMonitorAdd(interaction: ChatInputCommandInteraction, client
     channelId,
     baseUrl,
     label,
+    iconUrl,
     addedBy: interaction.user.id,
     addedAt: new Date().toISOString(),
   };

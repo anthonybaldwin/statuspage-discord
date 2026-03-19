@@ -27,6 +27,7 @@ Each monitor object requires:
 | `channelId` | Yes | Discord text channel ID for posting updates |
 | `baseUrl` | Yes | Public Statuspage URL (e.g. `https://status.atlassian.com`) |
 | `label` | No | Display name shown in embeds and command output |
+| `iconUrl` | No | Custom icon URL for embeds. Overrides auto-detected favicon. Useful when a page's favicon doesn't work in Discord (e.g. extensionless URLs). |
 
 ### Option B: Legacy Single-Monitor
 
