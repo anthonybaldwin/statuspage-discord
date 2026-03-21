@@ -1176,6 +1176,9 @@ async function handleMissingIncidents(
       // before it aged out of the API. Just update state and skip ghosting.
       const RESOLVED_GREEN = 0x2fb344;
       if (parentMessage.embeds[0]?.color === RESOLVED_GREEN) {
+        if (parentMessage.pinned) {
+          await parentMessage.unpin().catch(() => null);
+        }
         incidentState.resolvedAt = new Date().toISOString();
         continue;
       }
@@ -1185,9 +1188,7 @@ async function handleMissingIncidents(
       const incidentName = thread?.isThread() ? thread.name : "Unknown Incident";
       await parentMessage.edit({ embeds: [renderMissingParentEmbed(monitor, incidentName)] });
 
-      if (parentMessage.pinned) {
-        await parentMessage.unpin().catch(() => null);
-      }
+      await parentMessage.unpin().catch(() => null);
 
       if (thread?.isThread()) {
         for (const messageId of Object.values(incidentState.updateMessageIds)) {

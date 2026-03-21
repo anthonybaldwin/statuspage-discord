@@ -62,7 +62,7 @@ stateDiagram-v2
 
 ### Already-Resolved Ghost Skip
 
-If an incident was resolved (green embed) before it aged out of the API window, the bot detects the resolved color on the parent embed and simply marks it as resolved in state without re-rendering. This prevents resolved incidents from being unnecessarily ghosted.
+If an incident was resolved (green embed) before it aged out of the API window, the bot detects the resolved color on the parent embed and simply marks it as resolved in state without re-rendering. The parent message is also unpinned if still pinned (safety net for cases where the resolution-path unpin failed). This prevents resolved incidents from being unnecessarily ghosted.
 
 ## Open Incident Tracking
 
