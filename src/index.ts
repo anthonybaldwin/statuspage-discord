@@ -575,7 +575,7 @@ function truncate(value: string, maxLength: number) {
     return value;
   }
 
-  return `${value.slice(0, maxLength - 1)}...`;
+  return `${value.slice(0, maxLength - 1)}…`;
 }
 
 function monitorDisplayName(monitor: MonitorConfig, pageName?: string) {
@@ -840,7 +840,7 @@ async function replayIncidentTimeline(
 
 async function hasLiveIncidentMessages(channel: TextChannel, monitorState: MonitorState, incident: Incident) {
   const mapping = monitorState.incidents[incident.id];
-  if (!mapping) {
+  if (!mapping || !mapping.threadId) {
     return false;
   }
 
@@ -1062,7 +1062,7 @@ async function ensureIncidentThread(
 ): Promise<{ parentMessage: Message; thread: ThreadChannel }> {
   const existing = monitorState.incidents[incident.id];
 
-  if (existing) {
+  if (existing && existing.threadId) {
     try {
       const [parentMessage, fetchedThread] = await Promise.all([
         channel.messages.fetch(existing.parentMessageId),
@@ -1090,13 +1090,37 @@ async function ensureIncidentThread(
     }
   }
 
-  const parentMessage = await channel.send({
-    embeds: [renderParentEmbed(monitor, incident)],
-  });
+  // If we have a parentMessageId but no threadId, a previous attempt sent the parent
+  // message but failed to create the thread. Reuse the orphaned parent message.
+  const orphaned = monitorState.incidents[incident.id];
+  let parentMessage: Message;
+
+  if (orphaned?.parentMessageId && !orphaned.threadId) {
+    try {
+      parentMessage = await channel.messages.fetch(orphaned.parentMessageId);
+    } catch {
+      delete monitorState.incidents[incident.id];
+      parentMessage = await channel.send({
+        embeds: [renderParentEmbed(monitor, incident)],
+      });
+    }
+  } else {
+    parentMessage = await channel.send({
+      embeds: [renderParentEmbed(monitor, incident)],
+    });
+  }
+
+  // Persist the parent message ID immediately so it can be recovered on retry.
+  monitorState.incidents[incident.id] = {
+    parentMessageId: parentMessage.id,
+    threadId: "",
+    postedUpdateIds: [],
+    updateMessageIds: {},
+    resolvedAt: incident.resolved_at ?? undefined,
+  };
 
   if (!incident.resolved_at) {
     await parentMessage.pin().catch(() => null);
-
   }
 
   const thread = await parentMessage.startThread({
@@ -1105,13 +1129,7 @@ async function ensureIncidentThread(
     reason: `Statuspage incident ${incident.id}`,
   });
 
-  monitorState.incidents[incident.id] = {
-    parentMessageId: parentMessage.id,
-    threadId: thread.id,
-    postedUpdateIds: [],
-    updateMessageIds: {},
-    resolvedAt: incident.resolved_at ?? undefined,
-  };
+  monitorState.incidents[incident.id].threadId = thread.id;
 
   return { parentMessage, thread };
 }
@@ -1182,7 +1200,9 @@ async function handleMissingIncidents(
         continue;
       }
 
-      const thread = await client.channels.fetch(incidentState.threadId);
+      const thread = incidentState.threadId
+        ? await client.channels.fetch(incidentState.threadId).catch(() => null)
+        : null;
 
       const incidentName = thread?.isThread() ? thread.name : "Unknown Incident";
       await parentMessage.edit({ embeds: [renderMissingParentEmbed(monitor, incidentName)] });
