@@ -16,7 +16,7 @@ You must configure monitors using **one** of these two approaches:
 ### Option A: Multi-Monitor (Recommended)
 
 ```env
-STATUSPAGE_MONITORS_JSON=[{"id":"atlassian","channelId":"123456789","baseUrl":"https://status.atlassian.com","label":"Atlassian"},{"id":"claude","channelId":"987654321","baseUrl":"https://status.claude.com","label":"Claude"}]
+STATUSPAGE_MONITORS_JSON=[{"id":"atlassian","channelId":"123456789","baseUrl":"https://status.atlassian.com","label":"Atlassian"},{"id":"openai","channelId":"987654321","baseUrl":"https://status.openai.com","label":"OpenAI","provider":"incidentio"}]
 ```
 
 Each monitor object requires:
@@ -25,9 +25,10 @@ Each monitor object requires:
 |-------|----------|-------------|
 | `id` | Yes | Unique identifier used in commands and state |
 | `channelId` | Yes | Discord text channel ID for posting updates |
-| `baseUrl` | Yes | Public Statuspage URL (e.g. `https://status.atlassian.com`) |
+| `baseUrl` | Yes | Public status page URL (Statuspage.io e.g. `https://status.atlassian.com` or incident.io e.g. `https://status.openai.com`) |
 | `label` | No | Display name shown in embeds and command output |
 | `iconUrl` | No | Custom icon URL for embeds. Overrides auto-detected favicon. Useful when a page's favicon doesn't work in Discord (e.g. extensionless URLs). |
+| `provider` | No | Provider ID: `statuspage` (default) or `incidentio`. If omitted, `statuspage` is assumed — set to `incidentio` explicitly for incident.io pages. Runtime monitors added via `/monitor add` have this set automatically based on probe results. |
 
 ### Option B: Legacy Single-Monitor
 
@@ -47,7 +48,7 @@ Monitors can also be added at runtime via `/monitor add`. These are persisted in
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DISCORD_GUILD_ID` | — | Guild ID for faster command registration during development. When set, commands are guild-scoped instead of global. |
-| `POLL_INTERVAL_MS` | `60000` | How often (in ms) to poll each Statuspage |
+| `POLL_INTERVAL_MS` | `60000` | How often (in ms) to poll each status page |
 | `POST_EXISTING_UPDATES_ON_START` | `false` | When `true`, posts all visible incident updates on first startup instead of silently seeding them |
 | `APP_VERSION` | `package.json` version | Version string displayed in the bot's rotating Discord presence. Auto-set during Docker builds via build arg. |
 

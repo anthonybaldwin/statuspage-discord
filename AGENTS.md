@@ -4,7 +4,7 @@ Instructions for AI coding agents working on this project. **All agents MUST rea
 
 ## Project Overview
 
-statuspage-discord is a Bun-based Discord bot that polls Statuspage.io pages and posts incident updates as threaded conversations in Discord. It supports multiple monitors, runtime monitor management, and persistent state.
+statuspage-discord is a Bun-based Discord bot that polls public status pages (Statuspage.io and incident.io are supported) and posts incident updates as threaded conversations in Discord. It supports multiple monitors, runtime monitor management, and persistent state.
 
 ## Tech Stack
 
@@ -17,6 +17,11 @@ statuspage-discord is a Bun-based Discord bot that polls Statuspage.io pages and
 
 ```
 src/index.ts              # All bot logic (~1700 lines, single file)
+src/providers/            # Per-provider API adapters (one file per provider)
+  types.ts                # Canonical Incident/Summary/PageStatus + Provider interface
+  index.ts                # Provider registry + detectProvider()
+  statuspage.ts           # Statuspage.io adapter
+  incidentio.ts           # incident.io adapter (uses /proxy/<host> widget API)
 data/state.json           # Runtime state (git-ignored, auto-created)
 data/monitors.json        # Runtime monitors (git-ignored, auto-created)
 AGENTS.md                 # Agent instructions (cross-tool)
@@ -69,12 +74,21 @@ docker compose up -d      # Docker deployment
 ## Key Patterns
 
 ### Single-File Architecture
-All logic is in `src/index.ts`. Functions are ordered by dependency (callees above callers). Don't split into modules unless the file exceeds ~3000 lines.
+All bot logic is in `src/index.ts`. Functions are ordered by dependency (callees above callers). Don't split into modules unless the file exceeds ~3000 lines. The single-file rule does **not** apply to `src/providers/` — each provider adapter lives in its own small file so adding new providers is trivial.
+
+### Adding a New Provider
+
+1. Create `src/providers/<name>.ts` exporting a `Provider` object (see `src/providers/types.ts` for the interface). Implement `probe`, `fetchSummary`, and `fetchIncidents` so they return the canonical `Incident`/`Summary` shapes.
+2. Register it in `src/providers/index.ts`: add to the `PROVIDERS` record, insert into `PROBE_ORDER` (more specific providers first — a provider whose probe might false-positive belongs later in the order).
+3. Add its ID to the `provider` enum on `monitorSchema` in `src/index.ts`.
+4. Update `docs/wiki/API-Integration.md` with the endpoints and any quirks.
+
+No changes to polling, rendering, state, or thread lifecycle should be required — every provider normalizes into the canonical types.
 
 ### Error Handling
 - Use `isDiscordCleanupError()` helper for Discord state cleanup (consolidates codes 10003, 10008, 50001, 50013, 50035)
 - Never catch-all delete state on generic errors — only on confirmed missing Discord resources
-- Statuspage API calls use `retryWithBackoff` (3 attempts, exponential: 1s/2s/4s) for transient errors (network failures, HTTP 429/500/502/503/504). Permanent errors fail immediately.
+- Status page API calls use `retryWithBackoff` (3 attempts, exponential: 1s/2s/4s) for transient errors (network failures, HTTP 429/500/502/503/504). Permanent errors fail immediately.
 - Thread archive/unarchive failures are logged but non-fatal
 
 ### State Management

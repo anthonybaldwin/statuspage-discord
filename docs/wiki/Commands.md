@@ -34,13 +34,13 @@ Replay active incident timelines into their threads.
 
 ## `/cleanup [target]`
 
-Find and ghost dangling incident threads that are no longer in the Statuspage API.
+Find and ghost dangling incident threads that are no longer in the status page API.
 
 - **Permission:** Manage Server
 - **Response:** Ephemeral summary of ghosted incidents
 - **Target resolution:** If `target` is omitted, cleans all monitors. Otherwise cleans only the specified monitor.
 - **Behavior:**
-  1. Fetches current incidents from the Statuspage API for each target monitor
+  1. Fetches current incidents from the status page API for each target monitor
   2. Identifies tracked incidents that are unresolved in state but absent from the API
   3. Ghosts them (grey embed + strikethrough text + unpin + archive thread)
   4. Syncs `openIncidentIds` from the API
@@ -63,19 +63,19 @@ Delete recent bot-authored messages in the current channel.
 
 ## `/monitor add <url> [channel] [label] [id] [icon_url]`
 
-Add a new Statuspage monitor at runtime.
+Add a new status page monitor at runtime. Both Statuspage.io and incident.io URLs are supported — the provider is auto-detected from the URL.
 
 - **Permission:** Manage Server
 - **Options:**
-  - `url` (required): Public Statuspage URL (e.g. `https://status.atlassian.com`)
+  - `url` (required): Public status page URL (e.g. `https://status.atlassian.com` or `https://status.openai.com`)
   - `channel` (optional): Target text channel; defaults to the current channel
   - `label` (optional): Display name for the monitor
   - `id` (optional): Unique monitor ID; auto-derived from the page name if omitted
   - `icon_url` (optional): Custom icon URL for embeds; overrides auto-detected favicon
 - **Validation:**
-  - Tests `<url>/api/v2/summary.json` to confirm a valid Statuspage
+  - Probes each supported provider (incident.io first, then Statuspage.io) and picks the first match. The detected provider is saved on the monitor entry so future polls skip detection.
   - Checks bot permissions in the target channel
-  - Rejects duplicate IDs or duplicate URLs (same Statuspage can only be tracked once per server; different statuspages in the same channel are allowed)
+  - Rejects duplicate IDs or duplicate URLs (same status page can only be tracked once per server; different status pages in the same channel are allowed)
 - **Side effects:**
   - Persists to `data/monitors.json`
   - Re-registers commands for updated autocomplete

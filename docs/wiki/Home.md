@@ -1,10 +1,10 @@
 # statuspage-discord
 
-A Bun-based Discord bot that monitors [Statuspage.io](https://www.atlassian.com/software/statuspage) pages and posts incident updates to Discord as threaded conversations.
+A Bun-based Discord bot that monitors public status pages — [Statuspage.io](https://www.atlassian.com/software/statuspage) and [incident.io](https://incident.io/) are supported — and posts incident updates to Discord as threaded conversations.
 
 ## What It Does
 
-- **Polls** one or more public Statuspage pages on a configurable interval
+- **Polls** one or more public status pages on a configurable interval (auto-detects provider)
 - **Creates Discord threads** for each incident, posting updates as they arrive
 - **Pins** active incidents and unpins them when resolved
 - **Ghosts** incidents that vanish from the API (strikethrough + grey)
@@ -20,7 +20,7 @@ A Bun-based Discord bot that monitors [Statuspage.io](https://www.atlassian.com/
 | [Commands](Commands.md) | All slash commands with usage and permissions |
 | [Incident Lifecycle](Incident-Lifecycle.md) | How incidents are tracked from creation to resolution or deletion |
 | [State Management](State-Management.md) | Persistence format, migration, and locking |
-| [API Integration](API-Integration.md) | Statuspage API endpoints and response handling |
+| [API Integration](API-Integration.md) | Supported providers, endpoints, and how to add a new provider |
 | [Deployment](Deployment.md) | Docker, Docker Compose, CI/CD, and production notes |
 | [Development](Development.md) | Local setup, tooling, and contribution guide |
 | [Contributing](Contributing.md) | How to contribute, code conventions, and documentation rules |
