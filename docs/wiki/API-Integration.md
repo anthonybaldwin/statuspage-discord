@@ -97,11 +97,12 @@ Provider-agnostic. On startup and when adding a runtime monitor, the bot resolve
 
 1. If `iconUrl` is set on the monitor config, use it directly (skips all fetching).
 2. Otherwise, `GET <baseUrl>` (HTML page).
-3. Regex match: `<link rel="shortcut icon" href="...">`.
-4. Protocol-relative URLs (`//`) are normalized to `https://`.
-5. Cached in memory (`monitorIcons` Map) for embed author icons.
+3. Scan every `<link>` tag whose `rel` contains `icon` (matches `rel="icon"`, `rel="shortcut icon"`, and `rel="apple-touch-icon"` in any attribute order).
+4. Rank candidates: non-SVG first (Discord embed author icons don't render SVG), then largest `sizes="WxH"` wins.
+5. Decode common HTML entities (`&amp;`, `&#38;`, `&quot;`) and resolve relative/protocol-relative hrefs against the base URL.
+6. Cached in memory (`monitorIcons` Map) for embed author icons.
 
-Use `iconUrl` to override auto-detection when a page's favicon doesn't work in Discord (e.g. extensionless CloudFront URLs).
+Use `iconUrl` to override auto-detection when a page's icon is injected by JavaScript, hosted on a CDN that rejects hotlinking, or otherwise unreachable for Discord's image fetcher.
 
 ## Error Handling
 
