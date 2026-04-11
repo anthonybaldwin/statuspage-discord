@@ -2,13 +2,14 @@
 
 ## Overview
 
-statuspage-discord is a single-file TypeScript application (`src/index.ts`, ~1700 lines) that runs on the [Bun](https://bun.sh) runtime. It connects to Discord via [discord.js](https://discord.js.org/) and polls public Statuspage.io API endpoints on a timer.
+statuspage-discord is a Bun/TypeScript application with bot logic in `src/index.ts` (~1700 lines, single file by design) and provider-specific API adapters in `src/providers/` (one small file per provider). It connects to Discord via [discord.js](https://discord.js.org/) and polls supported public status page APIs on a timer.
 
 ## Data Flow
 
 ```mermaid
 graph LR
-  A["Statuspage API"] -->|poll every 60s| B["Bot"]
+  A["Status page API\n(Statuspage.io or incident.io)"] -->|poll every 60s| P["Provider adapter"]
+  P -->|normalized Incident[]| B["Bot"]
   B -->|compare update IDs| C["State"]
   B -->|new updates?| D["Discord API"]
   C --- E["data/state.json"]
@@ -18,7 +19,7 @@ graph LR
   D --- I["pins"]
 ```
 
-1. Every `POLL_INTERVAL_MS` (default 60s), the bot fetches `/api/v2/incidents.json` for each monitor
+1. Every `POLL_INTERVAL_MS` (default 60s), the bot calls `getProvider(monitor).fetchIncidents()` for each monitor. The provider adapter handles its API quirks and returns a normalized `Incident[]`.
 2. Compares returned update IDs against `monitorState.postedUpdateIds`
 3. For each unseen update: ensures a thread exists, posts the update embed, syncs the parent message
 4. Reconciles `openIncidentIds` against the API to detect vanished incidents
@@ -31,10 +32,10 @@ The single source file is organized into these logical sections:
 | Section | Lines (approx.) | Purpose |
 |---------|-----------------|---------|
 | Imports & Validation | 1-100 | Zod schemas, env parsing, monitor loading |
-| Types | 100-240 | TypeScript interfaces for API responses and state |
+| State Types | 100-240 | State-only types (canonical Incident/Summary types live in `src/providers/types.ts`) |
 | Command Builders | 240-350 | Slash command definitions (dynamic via feature flags) |
 | State I/O | 350-410 | Read/write `state.json` with migration support |
-| API Client | 410-435 | Fetch wrappers for Statuspage endpoints |
+| API Client | 410-435 | Thin wrappers that dispatch to `getProvider(monitor)` from `src/providers/` |
 | UI Rendering | 435-700 | Embed builders for status, incidents, updates, ghosts |
 | Replay Logic | 700-880 | Incident timeline replay and deduplication |
 | Autocomplete | 880-910 | Monitor autocomplete for slash commands |
@@ -58,11 +59,11 @@ The rotation reads state from disk each tick to get current incident counts, and
 
 ## Key Design Decisions
 
-### Single File
-All logic lives in one file for simplicity. The bot is small enough that splitting into modules would add overhead without meaningful benefit.
+### Single File (with a provider sidecar)
+Bot logic lives in one file (`src/index.ts`) for simplicity — the project is small enough that splitting core logic into modules would add overhead without meaningful benefit. Provider-specific API code is the one exception: each provider lives in its own small file under `src/providers/` so adding a new provider is a drop-in change with no edits to `src/index.ts` beyond registering the provider.
 
 ### Polling Over Webhooks
-Statuspage.io supports webhooks, but polling is simpler to deploy (no public endpoint needed) and works behind NATs/firewalls. The trade-off is a ~60s update delay.
+Both Statuspage.io and incident.io support webhooks, but polling is simpler to deploy (no public endpoint needed) and works behind NATs/firewalls. The trade-off is a ~60s update delay.
 
 ### Thread-Per-Incident
 Each incident gets its own Discord thread hanging off a "parent" embed in the channel. This keeps the main channel clean while preserving full timelines.

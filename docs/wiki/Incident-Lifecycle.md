@@ -22,7 +22,7 @@ stateDiagram-v2
 
 ### Active
 
-- **Trigger:** A new incident appears in the Statuspage API with no `resolved_at` timestamp
+- **Trigger:** A new incident appears in the status page API with no `resolved_at` timestamp
 - **Discord actions:**
   - Parent embed posted in the monitor channel (color-coded by impact)
   - Parent message pinned

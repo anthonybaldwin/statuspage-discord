@@ -21,6 +21,8 @@ import {
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
+import { detectProvider, getProvider, SUPPORTED_PROVIDERS } from "./providers";
+import type { Incident, IncidentUpdate, Summary } from "./providers/types";
 
 const booleanFromEnv = z
   .string()
@@ -48,6 +50,7 @@ const monitorSchema = z.object({
   baseUrl: z.string().url(),
   label: z.string().min(1).optional(),
   iconUrl: z.string().url().optional(),
+  provider: z.enum(["statuspage", "incidentio"]).optional(),
 });
 
 const envSchema = z.object({
@@ -154,7 +157,7 @@ async function fetchMonitorIcon(monitor: MonitorConfig): Promise<string | undefi
     const response = await fetch(monitor.baseUrl);
     if (!response.ok) return undefined;
     const html = await response.text();
-    // Look for <link rel="shortcut icon" href="..."> (standard Statuspage favicon).
+    // Look for <link rel="shortcut icon" href="..."> (standard status-page favicon).
     const match = html.match(/<link[^>]+rel=["']shortcut icon["'][^>]+href=["']([^"']+)["']/i);
     if (match?.[1]) {
       const href = match[1];
@@ -178,46 +181,9 @@ async function cacheMonitorIcons() {
   );
 }
 
-type PageStatus = {
-  indicator: string;
-  description: string;
-};
-
-type IncidentUpdate = {
-  id: string;
-  status: string;
-  body: string;
-  created_at: string;
-  updated_at?: string;
-};
-
-type Incident = {
-  id: string;
-  name: string;
-  status: string;
-  impact: string;
-  shortlink?: string;
-  created_at: string;
-  updated_at?: string;
-  resolved_at?: string | null;
-  incident_updates: IncidentUpdate[];
-};
-
-type Summary = {
-  page: {
-    id: string;
-    name: string;
-    url: string;
-    updated_at?: string;
-  };
-  status: PageStatus;
-  incidents: Incident[];
-};
-
-type IncidentsResponse = {
-  page: Summary["page"];
-  incidents: Incident[];
-};
+// Note: Incident, IncidentUpdate, and Summary types are imported from
+// `./providers/types` at the top of this file. All providers normalize their
+// API responses into these canonical shapes.
 
 type MonitorState = {
   postedUpdateIds: string[];
@@ -257,7 +223,7 @@ function buildCommands() {
     built.push(
       new SlashCommandBuilder()
         .setName("status")
-        .setDescription("Get the current status for one configured Statuspage.")
+        .setDescription("Get the current status for one configured status page.")
         .addStringOption((option) =>
           option
             .setName("target")
@@ -344,14 +310,17 @@ function buildCommands() {
     built.push(
       new SlashCommandBuilder()
         .setName("monitor")
-        .setDescription("Manage runtime Statuspage monitors.")
+        .setDescription("Manage runtime status page monitors.")
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand((sub) =>
           sub
             .setName("add")
-            .setDescription("Add a new Statuspage monitor.")
+            .setDescription("Add a new status page monitor (Statuspage.io or incident.io).")
             .addStringOption((opt) =>
-              opt.setName("url").setDescription("Public Statuspage URL (e.g. https://status.atlassian.com)").setRequired(true),
+              opt
+                .setName("url")
+                .setDescription("Public status page URL (e.g. https://status.atlassian.com or https://status.openai.com)")
+                .setRequired(true),
             )
             .addChannelOption((opt) =>
               opt
@@ -450,28 +419,12 @@ async function writeState(state: BotState) {
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-async function fetchJson<T>(monitor: MonitorConfig, path: string): Promise<T> {
-  const response = await fetch(`${monitor.baseUrl}/api/v2${path}`, {
-    headers: {
-      Accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Statuspage request failed (${response.status}): ${body}`);
-  }
-
-  return (await response.json()) as T;
+function fetchSummary(monitor: MonitorConfig): Promise<Summary> {
+  return getProvider(monitor).fetchSummary(monitor);
 }
 
-async function fetchSummary(monitor: MonitorConfig): Promise<Summary> {
-  return fetchJson<Summary>(monitor, "/summary.json");
-}
-
-async function fetchIncidents(monitor: MonitorConfig): Promise<Incident[]> {
-  const response = await fetchJson<IncidentsResponse>(monitor, "/incidents.json");
-  return response.incidents;
+function fetchIncidents(monitor: MonitorConfig): Promise<Incident[]> {
+  return getProvider(monitor).fetchIncidents(monitor);
 }
 
 function formatTimestamp(value?: string | null) {
@@ -1124,7 +1077,7 @@ async function ensureIncidentThread(
   const thread = await parentMessage.startThread({
     name: truncate(incident.name, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
-    reason: `Statuspage incident ${incident.id}`,
+    reason: `${getProvider(monitor).displayName} incident ${incident.id}`,
   });
 
   monitorState.incidents[incident.id].threadId = thread.id;
@@ -1647,19 +1600,15 @@ async function handleMonitorAdd(interaction: ChatInputCommandInteraction, client
     throw new Error("Could not determine a target channel.");
   }
 
-  // Validate the URL by fetching the summary endpoint.
-  let summary: Summary;
-  try {
-    const response = await fetch(`${baseUrl}/api/v2/summary.json`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    summary = (await response.json()) as Summary;
-  } catch {
-    throw new Error(`Could not reach a valid Statuspage at \`${baseUrl}\`. Make sure the URL points to a public Statuspage (e.g. \`https://status.atlassian.com\`).`);
+  // Probe each supported provider in order; the first one to recognize the URL wins.
+  const detected = await detectProvider(baseUrl);
+  if (!detected) {
+    const supported = SUPPORTED_PROVIDERS.map((p) => p.displayName).join(", ");
+    throw new Error(
+      `Could not reach a supported status page at \`${baseUrl}\`. Supported providers: ${supported}. Example URLs: \`https://status.atlassian.com\` (Statuspage), \`https://status.openai.com\` (incident.io).`,
+    );
   }
+  const { provider, summary } = detected;
 
   // Check bot permissions in target channel.
   const targetChannel = await client.channels.fetch(channelId);
@@ -1689,7 +1638,7 @@ async function handleMonitorAdd(interaction: ChatInputCommandInteraction, client
     throw new Error(`A monitor with ID \`${monitorId}\` already exists${source}.`);
   }
 
-  // Duplicate URL check — same Statuspage should only be tracked once per server.
+  // Duplicate URL check — same status page should only be tracked once per server.
   const existingUrl = monitors.find((m) => m.baseUrl.replace(/\/+$/, "") === baseUrl);
   if (existingUrl) {
     throw new Error(`A monitor for \`${baseUrl}\` already exists (\`${existingUrl.id}\` in <#${existingUrl.channelId}>).`);
@@ -1701,6 +1650,7 @@ async function handleMonitorAdd(interaction: ChatInputCommandInteraction, client
     baseUrl,
     label,
     iconUrl,
+    provider: provider.id,
     addedBy: interaction.user.id,
     addedAt: new Date().toISOString(),
   };
@@ -1847,7 +1797,7 @@ function startPresenceRotation(client: Client<true>) {
         const uptimeStr = uptimeDays > 0 ? `${uptimeDays}d ${uptimeHours}h` : uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes}m` : `${uptimeMinutes}m`;
 
         const activities: { name: string; type: ActivityType }[] = [
-          { name: `${monitors.length || "No"} Statuspage${monitors.length === 1 ? "" : "s"}`, type: ActivityType.Watching },
+          { name: `${monitors.length || "No"} status page${monitors.length === 1 ? "" : "s"}`, type: ActivityType.Watching },
           { name: `${totalIncidents || "No"} active incident${totalIncidents === 1 ? "" : "s"}`, type: ActivityType.Watching },
           { name: `v${appVersion} (Uptime: ${uptimeStr})`, type: ActivityType.Playing },
         ];
