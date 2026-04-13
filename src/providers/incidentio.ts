@@ -234,7 +234,7 @@ function mapIncident(incident: IncidentIoIncident, publicUrl?: string): Incident
   let shortlink = incident.url;
   if (!shortlink && publicUrl) {
     const base = publicUrl.replace(/\/+$/, "");
-    shortlink = `${base}/incident/${incident.id}`;
+    shortlink = `${base}/incidents/${incident.id}`;
   }
 
   return {
