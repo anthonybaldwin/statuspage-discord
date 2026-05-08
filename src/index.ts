@@ -1340,32 +1340,42 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
   const unseen = allUpdates.filter(({ update }) => !monitorState.postedUpdateIds.includes(update.id));
 
   for (const { incident, update } of unseen) {
-    const { parentMessage, thread } = await ensureIncidentThread(channel, monitorState, monitor, incident);
-    const incidentState = monitorState.incidents[incident.id];
-    incidentState.resolvedAt = incident.resolved_at ?? undefined;
+    // Isolate each update so a transient Discord error (rate limit, 5xx,
+    // 50001 on a thread/parent that needs healing) doesn't abort the rest
+    // of this monitor's pending updates and prevent the outer writeState.
+    try {
+      const { parentMessage, thread } = await ensureIncidentThread(channel, monitorState, monitor, incident);
+      const incidentState = monitorState.incidents[incident.id];
+      incidentState.resolvedAt = incident.resolved_at ?? undefined;
 
-    if (thread.archived) {
-      await thread.setArchived(false, "New incident update received");
+      if (thread.archived) {
+        await thread.setArchived(false, "New incident update received");
+      }
+
+      if (!incidentState.postedUpdateIds.includes(update.id)) {
+        const message = await thread.send({
+          embeds: [renderUpdateEmbed(monitor, incident, update)],
+        });
+        incidentState.postedUpdateIds.push(update.id);
+        incidentState.updateMessageIds[update.id] = message.id;
+        incidentState.postedUpdateIds = incidentState.postedUpdateIds.slice(-500);
+      }
+
+      await syncIncidentParentMessage(channel, monitorState, monitor, incident, parentMessage);
+
+      if (incident.resolved_at && !thread.archived) {
+        await parentMessage.unpin().catch(() => null);
+        await thread.setArchived(true, "Incident resolved");
+      }
+
+      monitorState.postedUpdateIds.push(update.id);
+      monitorState.lastPostedAt = new Date().toISOString();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(
+        `Failed to post update "${update.id}" for incident "${incident.id}" on monitor "${monitor.id}": ${msg}`,
+      );
     }
-
-    if (!incidentState.postedUpdateIds.includes(update.id)) {
-      const message = await thread.send({
-        embeds: [renderUpdateEmbed(monitor, incident, update)],
-      });
-      incidentState.postedUpdateIds.push(update.id);
-      incidentState.updateMessageIds[update.id] = message.id;
-      incidentState.postedUpdateIds = incidentState.postedUpdateIds.slice(-500);
-    }
-
-    await syncIncidentParentMessage(channel, monitorState, monitor, incident, parentMessage);
-
-    if (incident.resolved_at && !thread.archived) {
-      await parentMessage.unpin().catch(() => null);
-      await thread.setArchived(true, "Incident resolved");
-    }
-
-    monitorState.postedUpdateIds.push(update.id);
-    monitorState.lastPostedAt = new Date().toISOString();
   }
 
   const apiIncidentIds = new Set(incidents.map((incident) => incident.id));
@@ -1392,8 +1402,18 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
 
 async function postLatestUpdates(client: Client) {
   const state = await readState();
+  // Isolate each monitor so a transient failure (Discord 5xx, 50001 on a
+  // misconfigured channel, etc.) doesn't abort the for-loop and skip
+  // writeState. Without this, a successful claude post followed by a
+  // failed discord post would lose the in-memory dedup advance for
+  // claude — next poll re-posts the same update IDs.
   for (const monitor of monitors) {
-    await postLatestUpdatesForMonitor(client, monitor, state);
+    try {
+      await postLatestUpdatesForMonitor(client, monitor, state);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`postLatestUpdatesForMonitor("${monitor.id}") failed: ${msg}`);
+    }
   }
   await writeState(state);
 }
