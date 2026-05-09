@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for your interest in contributing to statuspage-discord!
+Thanks for your interest in contributing to squawk!
 
 ## Getting Started
 
 1. **Open an issue** to discuss the change before starting work on anything non-trivial
 2. **Fork the repo** and create a feature branch off `main`
-3. **Set up your environment** — see the [Development](https://github.com/anthonybaldwin/statuspage-discord/wiki/Development) page for local setup
+3. **Set up your environment** — see the [Development](https://github.com/anthonybaldwin/squawk/wiki/Development) page for local setup
 4. **Make your changes**, ensuring they follow the conventions below
 5. **Open a pull request** against `main`
 
@@ -101,4 +101,4 @@ gh pr merge --rebase --delete-branch
 
 ## Questions?
 
-Open a [GitHub issue](https://github.com/anthonybaldwin/statuspage-discord/issues) or start a [discussion](https://github.com/anthonybaldwin/statuspage-discord/discussions).
+Open a [GitHub issue](https://github.com/anthonybaldwin/squawk/issues) or start a [discussion](https://github.com/anthonybaldwin/squawk/discussions).

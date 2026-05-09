@@ -9,8 +9,8 @@
 ## Setup
 
 ```bash
-git clone https://github.com/anthonybaldwin/statuspage-discord.git
-cd statuspage-discord
+git clone https://github.com/anthonybaldwin/squawk.git
+cd squawk
 bun install
 cp .env.example .env
 # Edit .env with your bot token and channel IDs

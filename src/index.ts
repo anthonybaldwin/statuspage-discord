@@ -59,6 +59,11 @@ const envSchema = z.object({
   DISCORD_GUILD_ID: z.string().min(1).optional(),
   DISCORD_CHANNEL_ID: z.string().min(1).optional(),
   STATUSPAGE_BASE_URL: z.string().url().optional(),
+  // MONITORS_JSON is the canonical multi-monitor config (covers both
+  // Statuspage.io and incident.io). STATUSPAGE_MONITORS_JSON is the
+  // pre-rename alias — still honored, with a deprecation warning at
+  // startup. Either may be set; if both are set, MONITORS_JSON wins.
+  MONITORS_JSON: z.string().optional(),
   STATUSPAGE_MONITORS_JSON: z.string().optional(),
   POLL_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
   POST_EXISTING_UPDATES_ON_START: booleanFromEnv.default("false"),
@@ -83,8 +88,15 @@ type RuntimeMonitorFile = {
 };
 
 function loadMonitors(env: z.infer<typeof envSchema>): MonitorConfig[] {
-  if (env.STATUSPAGE_MONITORS_JSON) {
-    const parsed = JSON.parse(env.STATUSPAGE_MONITORS_JSON) as unknown;
+  const rawMonitors = env.MONITORS_JSON ?? env.STATUSPAGE_MONITORS_JSON;
+  if (rawMonitors) {
+    if (!env.MONITORS_JSON && env.STATUSPAGE_MONITORS_JSON) {
+      console.warn(
+        "STATUSPAGE_MONITORS_JSON is deprecated; rename to MONITORS_JSON. " +
+          "The legacy name still works but will be removed in a future release.",
+      );
+    }
+    const parsed = JSON.parse(rawMonitors) as unknown;
     return z.array(monitorSchema).parse(parsed);
   }
 
@@ -99,7 +111,7 @@ function loadMonitors(env: z.infer<typeof envSchema>): MonitorConfig[] {
   }
 
   throw new Error(
-    "Configure either STATUSPAGE_MONITORS_JSON or both DISCORD_CHANNEL_ID and STATUSPAGE_BASE_URL.",
+    "Configure either MONITORS_JSON or both DISCORD_CHANNEL_ID and STATUSPAGE_BASE_URL.",
   );
 }
 
@@ -1821,7 +1833,7 @@ async function handleMonitorList(interaction: ChatInputCommandInteraction) {
 
   if (monitors.length === 0) {
     await interaction.editReply({
-      content: "No monitors configured. Use `/monitor add` or set `STATUSPAGE_MONITORS_JSON`.",
+      content: "No monitors configured. Use `/monitor add` or set `MONITORS_JSON`.",
     });
     return;
   }

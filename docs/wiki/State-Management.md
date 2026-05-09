@@ -1,6 +1,6 @@
 # State Management
 
-The bot persists its state to JSON files in the `data/` directory. In Docker deployments, this directory is backed by a named volume (`statuspage_data`).
+The bot persists its state to JSON files in the `data/` directory. In Docker deployments, this directory is backed by a named volume (`squawk_data`).
 
 ## Files
 

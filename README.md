@@ -1,4 +1,4 @@
-# statuspage-discord
+# Squawk
 
 A Bun-based Discord bot that:
 
@@ -26,23 +26,23 @@ bun dev                    # Watch mode (or `bun start` for production)
 docker compose up -d       # Production deployment with Docker Compose
 ```
 
-A prebuilt image is available at `ghcr.io/anthonybaldwin/statuspage-discord:main`.
+A prebuilt image is available at `ghcr.io/anthonybaldwin/squawk:latest`.
 
 ## Documentation
 
-Full docs live in the [wiki](https://github.com/anthonybaldwin/statuspage-discord/wiki):
+Full docs live in the [wiki](https://github.com/anthonybaldwin/squawk/wiki):
 
 | Page | Description |
 |------|-------------|
-| [Architecture](https://github.com/anthonybaldwin/statuspage-discord/wiki/Architecture) | System design, data flow, and module structure |
-| [Configuration](https://github.com/anthonybaldwin/statuspage-discord/wiki/Configuration) | Environment variables, multi-monitor setup, feature flags |
-| [Commands](https://github.com/anthonybaldwin/statuspage-discord/wiki/Commands) | All slash commands with usage and permissions |
-| [Incident Lifecycle](https://github.com/anthonybaldwin/statuspage-discord/wiki/Incident-Lifecycle) | How incidents are tracked from creation to resolution or removal |
-| [State Management](https://github.com/anthonybaldwin/statuspage-discord/wiki/State-Management) | Persistence format, migration, and locking |
-| [API Integration](https://github.com/anthonybaldwin/statuspage-discord/wiki/API-Integration) | Supported providers, endpoints, and how to add a new provider |
-| [Deployment](https://github.com/anthonybaldwin/statuspage-discord/wiki/Deployment) | Docker, Docker Compose, CI/CD, and production notes |
-| [Development](https://github.com/anthonybaldwin/statuspage-discord/wiki/Development) | Local setup, tooling, and contribution guide |
-| [Contributing](https://github.com/anthonybaldwin/statuspage-discord/wiki/Contributing) | How to contribute, code conventions, and documentation rules |
+| [Architecture](https://github.com/anthonybaldwin/squawk/wiki/Architecture) | System design, data flow, and module structure |
+| [Configuration](https://github.com/anthonybaldwin/squawk/wiki/Configuration) | Environment variables, multi-monitor setup, feature flags |
+| [Commands](https://github.com/anthonybaldwin/squawk/wiki/Commands) | All slash commands with usage and permissions |
+| [Incident Lifecycle](https://github.com/anthonybaldwin/squawk/wiki/Incident-Lifecycle) | How incidents are tracked from creation to resolution or removal |
+| [State Management](https://github.com/anthonybaldwin/squawk/wiki/State-Management) | Persistence format, migration, and locking |
+| [API Integration](https://github.com/anthonybaldwin/squawk/wiki/API-Integration) | Supported providers, endpoints, and how to add a new provider |
+| [Deployment](https://github.com/anthonybaldwin/squawk/wiki/Deployment) | Docker, Docker Compose, CI/CD, and production notes |
+| [Development](https://github.com/anthonybaldwin/squawk/wiki/Development) | Local setup, tooling, and contribution guide |
+| [Contributing](https://github.com/anthonybaldwin/squawk/wiki/Contributing) | How to contribute, code conventions, and documentation rules |
 
 ## Notes
 
@@ -50,3 +50,7 @@ Full docs live in the [wiki](https://github.com/anthonybaldwin/statuspage-discor
 - For development, setting `DISCORD_GUILD_ID` makes slash-command registration update faster than global commands.
 - On first startup, the bot seeds current incident-update IDs without posting them unless `POST_EXISTING_UPDATES_ON_START=true`.
 - The bot needs Send Messages, Embed Links, Create Public Threads, and Manage Messages permissions.
+
+## Previously known as
+
+This project was originally named `statuspage-discord`. The new name reflects that it covers more than just Statuspage.io. The legacy `STATUSPAGE_MONITORS_JSON` env var is still honored (with a deprecation warning) — prefer `MONITORS_JSON` going forward.
