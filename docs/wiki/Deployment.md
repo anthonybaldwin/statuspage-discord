@@ -10,7 +10,7 @@ docker compose up -d
 
 The `compose.yml` configures:
 - `env_file: .env` for secret injection (never baked into the image)
-- `statuspage_data` named volume mounted at `/app/data` for persistent state
+- `squawk_data` named volume mounted at `/app/data` for persistent state
 - `restart: unless-stopped` for automatic recovery
 
 State survives container restarts, recreations, and image updates (e.g., via [Watchtower](https://containrrr.dev/watchtower/) or [WUD](https://github.com/fmartinou/whats-up-docker)).
@@ -20,13 +20,13 @@ State survives container restarts, recreations, and image updates (e.g., via [Wa
 Build:
 
 ```bash
-docker build -t statuspage-discord .
+docker build -t squawk .
 ```
 
 Run:
 
 ```bash
-docker run --rm --env-file .env -v statuspage_data:/app/data statuspage-discord
+docker run --rm --env-file .env -v squawk_data:/app/data squawk
 ```
 
 ## Prebuilt Image
@@ -34,7 +34,7 @@ docker run --rm --env-file .env -v statuspage_data:/app/data statuspage-discord
 A multi-arch image (ARM64 + AMD64) is published to GitHub Container Registry on every push to `main`:
 
 ```bash
-docker pull ghcr.io/anthonybaldwin/statuspage-discord:latest
+docker pull ghcr.io/anthonybaldwin/squawk:latest
 ```
 
 Tags:

@@ -4,7 +4,9 @@ Instructions for AI coding agents working on this project. **All agents MUST rea
 
 ## Project Overview
 
-statuspage-discord is a Bun-based Discord bot that polls public status pages (Statuspage.io and incident.io are supported) and posts incident updates as threaded conversations in Discord. It supports multiple monitors, runtime monitor management, and persistent state.
+Squawk is a Bun-based Discord bot that polls public status pages (Statuspage.io and incident.io are supported) and posts incident updates as threaded conversations in Discord. It supports multiple monitors, runtime monitor management, and persistent state.
+
+The repo was previously named `statuspage-discord`. The legacy `STATUSPAGE_MONITORS_JSON` env var is still honored as a deprecated alias for `MONITORS_JSON`.
 
 ## Tech Stack
 
@@ -122,7 +124,7 @@ Every command handler follows:
 
 See `.env.example` for the full list. Key ones:
 - `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID` (required)
-- `STATUSPAGE_MONITORS_JSON` or `DISCORD_CHANNEL_ID` + `STATUSPAGE_BASE_URL`
+- `MONITORS_JSON` or `DISCORD_CHANNEL_ID` + `STATUSPAGE_BASE_URL` (legacy `STATUSPAGE_MONITORS_JSON` still honored with deprecation warning)
 - `POLL_INTERVAL_MS` (default 60000)
 - `ENABLE_*_COMMAND` feature flags (all default true, includes `ENABLE_CLEANUP_COMMAND`)
 - `APP_VERSION` (optional, auto-set in Docker builds via build arg, falls back to `package.json` version)

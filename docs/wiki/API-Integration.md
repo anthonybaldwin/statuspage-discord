@@ -20,7 +20,7 @@ Current probe order:
 1. **incident.io** — probed first because many incident.io pages also expose a Statuspage-compatible `/api/v2/` shim, but the shim returns empty update bodies and a truncated history. Probing incident.io first ensures we use the richer native widget API when available.
 2. **Statuspage.io** — fallback for pages that are not on incident.io.
 
-Monitors loaded from `data/monitors.json` or `STATUSPAGE_MONITORS_JSON` that pre-date multi-provider support default to `statuspage` for backwards compatibility.
+Monitors loaded from `data/monitors.json` or `MONITORS_JSON` that pre-date multi-provider support default to `statuspage` for backwards compatibility.
 
 ## Statuspage.io Adapter
 

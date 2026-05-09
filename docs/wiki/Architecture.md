@@ -2,7 +2,7 @@
 
 ## Overview
 
-statuspage-discord is a Bun/TypeScript application with bot logic in `src/index.ts` (~1700 lines, single file by design) and provider-specific API adapters in `src/providers/` (one small file per provider). It connects to Discord via [discord.js](https://discord.js.org/) and polls supported public status page APIs on a timer.
+squawk is a Bun/TypeScript application with bot logic in `src/index.ts` (~1700 lines, single file by design) and provider-specific API adapters in `src/providers/` (one small file per provider). It connects to Discord via [discord.js](https://discord.js.org/) and polls supported public status page APIs on a timer.
 
 ## Data Flow
 

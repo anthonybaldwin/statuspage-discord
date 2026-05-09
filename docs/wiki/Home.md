@@ -1,4 +1,4 @@
-# statuspage-discord
+# squawk
 
 A Bun-based Discord bot that monitors public status pages — [Statuspage.io](https://www.atlassian.com/software/statuspage) and [incident.io](https://incident.io/) are supported — and posts incident updates to Discord as threaded conversations.
 

@@ -16,7 +16,7 @@ You must configure monitors using **one** of these two approaches:
 ### Option A: Multi-Monitor (Recommended)
 
 ```env
-STATUSPAGE_MONITORS_JSON=[{"id":"atlassian","channelId":"123456789","baseUrl":"https://status.atlassian.com","label":"Atlassian"},{"id":"openai","channelId":"987654321","baseUrl":"https://status.openai.com","label":"OpenAI","provider":"incidentio"}]
+MONITORS_JSON=[{"id":"atlassian","channelId":"123456789","baseUrl":"https://status.atlassian.com","label":"Atlassian"},{"id":"openai","channelId":"987654321","baseUrl":"https://status.openai.com","label":"OpenAI","provider":"incidentio"}]
 ```
 
 Each monitor object requires:
@@ -37,7 +37,7 @@ DISCORD_CHANNEL_ID=123456789
 STATUSPAGE_BASE_URL=https://status.atlassian.com
 ```
 
-This creates a single monitor with ID `default`. If `STATUSPAGE_MONITORS_JSON` is set, these two variables are ignored.
+This creates a single monitor with ID `default`. If `MONITORS_JSON` is set, these two variables are ignored.
 
 ### Runtime Monitors
 
