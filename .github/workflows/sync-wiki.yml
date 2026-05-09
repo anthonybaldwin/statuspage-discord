@@ -18,7 +18,7 @@ jobs:
 
       - name: Clone wiki repo
         run: |
-          git clone "https://x-access-token:${{ secrets.WIKI_SYNC_PAT }}@github.com/anthonybaldwin/squawk.wiki.git" wiki
+          git clone "https://x-access-token:${{ secrets.WIKI_SYNC_PAT }}@github.com/anthonybaldwin/statuspage-discord.wiki.git" wiki
 
       - name: Sync docs into wiki
         run: |
