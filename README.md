@@ -12,10 +12,6 @@ Supported providers are auto-detected at `/monitor add` time — drop in any pub
   <img width="483" height="424" alt="Squawk" src="https://github.com/user-attachments/assets/8359f28f-53e3-4c42-aa7e-002e0c3c4593" />
 </p>
 
-| 🚨 | 🧵 | 📌 | `/status` |
-  |---|---|---|---|
-  | <!-- img --> | <!-- img --> | <!-- img --> | <!-- img --> |
-
 ## Quick Start
 
 ```bash
