@@ -1,5 +1,7 @@
 # Squawk
 
+<img width="483" height="424" alt="image" src="https://github.com/user-attachments/assets/8359f28f-53e3-4c42-aa7e-002e0c3c4593" />
+
 A Bun-based Discord bot that:
 
 - polls one or more public status pages (Statuspage.io and incident.io are supported) and groups each incident into its own Discord thread
