@@ -10,6 +10,7 @@ import {
   GatewayIntentBits,
   Message,
   MessageFlags,
+  MessageType,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -263,6 +264,14 @@ type MonitorState = {
   lastPostedAt?: string;
   /** Running set of incident IDs the bot considers "open". Used to reliably detect ghost closures. */
   openIncidentIds: string[];
+  /**
+   * ID of the bot-authored "X pinned a message to this channel" system notice
+   * we currently keep visible (Discord emits one per pin and offers no API to
+   * suppress). Empty string = tracked but no notice currently visible.
+   * `undefined` = never initialized; next pin will run a one-time sweep of
+   * historical notices in the channel before switching to ID tracking.
+   */
+  lastPinNoticeMessageId?: string;
   incidents: Record<
     string,
     {
@@ -1077,6 +1086,84 @@ async function assertMonitorChannelAccess(
   throw new Error(`This command can only be used in <#${monitor.channelId}> or its incident threads.`);
 }
 
+// Discord auto-posts a "X pinned a message to this channel" system message
+// (MessageType.ChannelPinnedMessage = 6) whenever a message is pinned and
+// offers no API flag to suppress emission. To keep the channel from piling up
+// these notices across many incidents, we track the ID of the one we want
+// visible in monitor state and delete the previous one directly on each new
+// pin. Steady-state cost is one targeted delete + one tiny fetch (limit 5)
+// to capture the new notice's ID. The first invocation after an upgrade (or
+// fresh state) does a one-time historical sweep with a wider fetch so we
+// don't carry forward old accumulated notices.
+async function trackAndPrunePinNotice(
+  channel: TextChannel,
+  monitorState: MonitorState,
+  pinnedMessageId: string,
+) {
+  const botUserId = channel.client.user?.id;
+  if (!botUserId) {
+    return;
+  }
+
+  const matchesNewNotice = (m: Message) =>
+    m.type === MessageType.ChannelPinnedMessage &&
+    m.author.id === botUserId &&
+    m.reference?.messageId === pinnedMessageId;
+
+  try {
+    if (monitorState.lastPinNoticeMessageId === undefined) {
+      // Migration / first run: scan widely once, keep the just-emitted notice
+      // for our pin, delete every other bot-authored pin notice in range.
+      const recent = await channel.messages.fetch({ limit: 100 });
+      const keeper = recent.find(matchesNewNotice);
+      for (const m of recent.values()) {
+        if (
+          m.type === MessageType.ChannelPinnedMessage &&
+          m.author.id === botUserId &&
+          m.id !== keeper?.id
+        ) {
+          await m.delete().catch(() => null);
+        }
+      }
+      monitorState.lastPinNoticeMessageId = keeper?.id ?? "";
+      return;
+    }
+
+    if (monitorState.lastPinNoticeMessageId) {
+      await channel.messages
+        .delete(monitorState.lastPinNoticeMessageId)
+        .catch(() => null);
+    }
+    const recent = await channel.messages.fetch({ limit: 5 });
+    const keeper = recent.find(matchesNewNotice);
+    monitorState.lastPinNoticeMessageId = keeper?.id ?? "";
+  } catch {
+    // Cosmetic; ignore — the pin itself already succeeded.
+  }
+}
+
+// Companion to trackAndPrunePinNotice: when nothing remains pinned in the
+// channel, the lingering pin notice has nothing left to point at, so drop it.
+async function dropTrackedPinNoticeIfChannelEmpty(
+  channel: TextChannel,
+  monitorState: MonitorState,
+) {
+  if (!monitorState.lastPinNoticeMessageId) {
+    return;
+  }
+  try {
+    const pinned = await channel.messages.fetchPinned();
+    if (pinned.size > 0) {
+      return;
+    }
+    await channel.messages
+      .delete(monitorState.lastPinNoticeMessageId)
+      .catch(() => null);
+    monitorState.lastPinNoticeMessageId = "";
+  } catch {
+    // Cosmetic; ignore — the unpin itself already succeeded.
+  }
+}
 
 async function ensureIncidentThread(
   channel: TextChannel,
@@ -1145,6 +1232,7 @@ async function ensureIncidentThread(
 
   if (!incident.resolved_at) {
     await parentMessage.pin().catch(() => null);
+    await trackAndPrunePinNotice(channel, monitorState, parentMessage.id);
   }
 
   const thread = await parentMessage.startThread({
@@ -1178,9 +1266,10 @@ async function syncIncidentParentMessage(
 
     if (!incident.resolved_at && !message.pinned) {
       await message.pin().catch(() => null);
-  
+      await trackAndPrunePinNotice(channel, monitorState, message.id);
     } else if (incident.resolved_at && message.pinned) {
       await message.unpin().catch(() => null);
+      await dropTrackedPinNoticeIfChannelEmpty(channel, monitorState);
     }
   } catch (error) {
     if (
@@ -1222,6 +1311,7 @@ async function handleMissingIncidents(
       if (parentMessage.embeds[0]?.color === RESOLVED_GREEN) {
         if (parentMessage.pinned) {
           await parentMessage.unpin().catch(() => null);
+          await dropTrackedPinNoticeIfChannelEmpty(channel, monitorState);
         }
         incidentState.resolvedAt = new Date().toISOString();
         continue;
@@ -1235,6 +1325,7 @@ async function handleMissingIncidents(
       await parentMessage.edit({ embeds: [renderMissingParentEmbed(monitor, incidentName)] });
 
       await parentMessage.unpin().catch(() => null);
+      await dropTrackedPinNoticeIfChannelEmpty(channel, monitorState);
 
       if (thread?.isThread()) {
         for (const messageId of Object.values(incidentState.updateMessageIds)) {
@@ -1377,6 +1468,7 @@ async function postLatestUpdatesForMonitor(client: Client, monitor: MonitorConfi
 
       if (incident.resolved_at && !thread.archived) {
         await parentMessage.unpin().catch(() => null);
+        await dropTrackedPinNoticeIfChannelEmpty(channel, monitorState);
         await thread.setArchived(true, "Incident resolved");
       }
 
