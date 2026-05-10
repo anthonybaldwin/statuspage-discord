@@ -20,6 +20,7 @@ The bot persists its state to JSON files in the `data/` directory. In Docker dep
       "postedUpdateIds": ["update-id-1", "update-id-2"],
       "openIncidentIds": ["incident-id-1"],
       "lastPostedAt": "2026-03-02T15:50:31.184Z",
+      "lastPinNoticeMessageId": "discord-message-id",
       "incidents": {
         "<incident-id>": {
           "parentMessageId": "discord-message-id",
@@ -43,6 +44,7 @@ The bot persists its state to JSON files in the `data/` directory. In Docker dep
 | `postedUpdateIds` | Monitor | Deduplication list (last 500) to avoid re-posting updates |
 | `openIncidentIds` | Monitor | Running list of incident IDs the bot considers "open", used for ghost detection |
 | `lastPostedAt` | Monitor | Timestamp of the last posted update |
+| `lastPinNoticeMessageId` | Monitor | ID of the bot's currently-visible "pinned a message" system notice. Empty string = tracked but no notice visible. Absent = uninitialized; first pin runs a one-time historical sweep before switching to ID tracking. |
 | `incidents` | Monitor | Map of tracked incidents with Discord resource IDs |
 | `parentMessageId` | Incident | The embed message in the channel that anchors the thread |
 | `threadId` | Incident | The Discord thread ID for the incident |

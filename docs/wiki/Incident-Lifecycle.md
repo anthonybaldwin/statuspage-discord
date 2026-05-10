@@ -25,7 +25,7 @@ stateDiagram-v2
 - **Trigger:** A new incident appears in the status page API with no `resolved_at` timestamp
 - **Discord actions:**
   - Parent embed posted in the monitor channel (color-coded by impact)
-  - Parent message pinned
+  - Parent message pinned. The bot tracks the ID of the "pinned a message to this channel" system notice in `monitorState.lastPinNoticeMessageId` and deletes the previous one on each new pin, so the channel surfaces just one marker no matter how many incidents have come through. (First run after upgrade does a one-time wider sweep to clean up historical accumulation, then switches to ID tracking.)
   - Thread created off the parent message (named after the incident, 1-week auto-archive)
   - Each update posted as an embed in the thread
 - **State:** Tracked in `monitorState.incidents[incidentId]` with `resolvedAt: undefined`
@@ -45,7 +45,7 @@ stateDiagram-v2
 - **Trigger:** Incident gains a `resolved_at` timestamp in the API
 - **Discord actions:**
   - Parent embed updated (green color, "Resolved" footer)
-  - Parent message unpinned
+  - Parent message unpinned. If no incidents remain pinned in the channel, the lingering "pinned a message" system notice is also removed.
   - Thread archived with reason "Incident resolved"
 - **State:** `incidentState.resolvedAt` set; incident ID removed from `openIncidentIds`
 
@@ -55,7 +55,7 @@ stateDiagram-v2
 - **Discord actions:**
   - Parent embed replaced with grey, strikethrough version: `~~Incident Name~~`
   - All update embeds in the thread are greyed out with strikethrough text
-  - Parent message unpinned
+  - Parent message unpinned (and the pin system notice is cleaned up if nothing else remains pinned)
   - Thread archived
 - **State:** `incidentState.resolvedAt` set to current time
 - **Design rationale:** Deleted incidents are preserved in Discord for audit purposes. The strikethrough + grey styling makes it clear the incident was removed rather than resolved normally.
